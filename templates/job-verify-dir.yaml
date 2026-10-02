@@ -1,0 +1,41 @@
+{{- if .Values.jobs.dbInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-verify-dir
+  annotations:
+    "helm.sh/hook": "post-install,post-upgrade"
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "MyHelm.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: verify
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: [sh, -c, /usr/local/bin/glpi-verify-dir.sh]
+          # Needs root: fresh hostPath/local-path volumes ignore fsGroup, so this
+          # one-time ownership fixup (chown to www-data) requires uid 0. Everything
+          # else in the chart runs unprivileged (app 82, wait-db 65534).
+          securityContext:
+            runAsUser: 0
+          envFrom:
+            - {configMapRef: {name: {{ include "MyHelm.fullname" . }}-glpi-config}}
+          volumeMounts:
+            - {name: etc-data, mountPath: /etc/glpi}
+            - {name: files-data, mountPath: /var/lib/glpi}
+            - {name: marketplace-data, mountPath: {{ .Values.marketplacePersistence.mountPath }}}
+      volumes:
+        {{- include "MyHelm.dataVolume" (dict "name" "etc-data" "claimName" (printf "%s-etc" (include "MyHelm.fullname" .)) "enabled" .Values.etcPersistence.enabled) | nindent 8 }}
+        {{- include "MyHelm.dataVolume" (dict "name" "files-data" "claimName" (printf "%s-files" (include "MyHelm.fullname" .)) "enabled" .Values.filesPersistence.enabled) | nindent 8 }}
+        {{- include "MyHelm.dataVolume" (dict "name" "marketplace-data" "claimName" (printf "%s-marketplace" (include "MyHelm.fullname" .)) "enabled" .Values.marketplacePersistence.enabled) | nindent 8 }}
+{{- end }}

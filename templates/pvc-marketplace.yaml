@@ -1,0 +1,13 @@
+{{- if .Values.marketplacePersistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-marketplace
+  annotations:
+    "helm.sh/resource-policy": keep
+  labels:
+    {{- include "MyHelm.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: {{ .Values.marketplacePersistence.size }}}}
+{{- end }}

@@ -1,0 +1,68 @@
+{{- if .Values.cronjob.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-cron
+spec:
+  schedule: {{ .Values.cronjob.schedule | quote }}
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 100
+      template:
+        metadata:
+          labels:
+            {{- include "MyHelm.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.podSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          initContainers:
+            # Same guard as upstream: loop the read-only integrity check the install
+            # script itself uses, not a file-existence proxy (config_db.php is written
+            # before configure/cache finish, which still let cron race on fresh installs).
+            - name: wait-glpi
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              workingDir: /var/www/html
+              command: [sh, -c, 'until php bin/console database:check_schema_integrity > /dev/null 2>&1; do echo waiting for glpi install; sleep 10; done']
+              {{- with .Values.securityContext }}
+              securityContext:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              envFrom:
+                - configMapRef: {name: {{ include "MyHelm.fullname" . }}-glpi-config}
+              env:
+                - name: MARIADB_PASSWORD
+                  valueFrom: {secretKeyRef: {name: {{ .Values.mariadb.auth.existingSecret }}, key: mariadb-user-password}}
+              volumeMounts:
+                - {name: etc-data, mountPath: /etc/glpi}
+                - {name: files-data, mountPath: /var/lib/glpi}
+                - {name: marketplace-data, mountPath: {{ .Values.marketplacePersistence.mountPath }}}
+          containers:
+            - name: cron
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              workingDir: /var/www/html
+              command: [sh, -c, 'php front/cron.php']
+              {{- with .Values.securityContext }}
+              securityContext:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              envFrom:
+                - configMapRef: {name: {{ include "MyHelm.fullname" . }}-glpi-config}
+              env:
+                - name: MARIADB_PASSWORD
+                  valueFrom: {secretKeyRef: {name: {{ .Values.mariadb.auth.existingSecret }}, key: mariadb-user-password}}
+              volumeMounts:
+                - {name: etc-data, mountPath: /etc/glpi}
+                - {name: files-data, mountPath: /var/lib/glpi}
+                - {name: marketplace-data, mountPath: {{ .Values.marketplacePersistence.mountPath }}}
+          volumes:
+            {{- include "MyHelm.dataVolume" (dict "name" "etc-data" "claimName" (printf "%s-etc" (include "MyHelm.fullname" .)) "enabled" .Values.etcPersistence.enabled) | nindent 12 }}
+            {{- include "MyHelm.dataVolume" (dict "name" "files-data" "claimName" (printf "%s-files" (include "MyHelm.fullname" .)) "enabled" .Values.filesPersistence.enabled) | nindent 12 }}
+            {{- include "MyHelm.dataVolume" (dict "name" "marketplace-data" "claimName" (printf "%s-marketplace" (include "MyHelm.fullname" .)) "enabled" .Values.marketplacePersistence.enabled) | nindent 12 }}
+{{- end }}

@@ -1,0 +1,27 @@
+{{- if .Values.etcPersistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-etc
+  annotations:
+    "helm.sh/resource-policy": keep
+  labels:
+    {{- include "MyHelm.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: {{ .Values.etcPersistence.size }}}}
+{{- end }}
+---
+{{- if .Values.filesPersistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-files
+  annotations:
+    "helm.sh/resource-policy": keep
+  labels:
+    {{- include "MyHelm.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: {{ .Values.filesPersistence.size }}}}
+{{- end }}

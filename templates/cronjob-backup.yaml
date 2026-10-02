@@ -1,0 +1,47 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  {{- with .Values.backup.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ . }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 3
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 200
+      template:
+        metadata:
+          labels:
+            {{- include "MyHelm.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: "{{ .Values.jobs.dbInit.image.repository }}:{{ .Values.jobs.dbInit.image.tag }}"
+              env:
+                - name: DB_HOST
+                  value: "{{ .Release.Name }}-mariadb"
+                - name: DB_USER
+                  value: "{{ .Values.mariadb.auth.username }}"
+                - name: DB_NAME
+                  value: "{{ .Values.mariadb.auth.database }}"
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.mariadb.auth.existingSecret }}
+                      key: mariadb-user-password
+              command: [sh, -c, "mariadb-dump -h $DB_HOST -u $DB_USER -p\"$DB_PASSWORD\" $DB_NAME > /backup/$DB_NAME-$(date +%F).sql; ls -lh /backup"]
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ include "MyHelm.fullname" . }}-backup
+{{- end }}

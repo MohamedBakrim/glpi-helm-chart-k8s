@@ -1,0 +1,15 @@
+# Built packages — regenerate with: helm package . --destination dist/
+dist/
+
+# Editor/backup junk
+*.bak
+*.orig
+*.tmp
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# NOTE: do NOT ignore *.tgz — charts/*.tgz are the vendored dependencies
+# (mariadb/valkey) the server needs for an offline install.

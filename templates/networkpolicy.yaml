@@ -1,0 +1,22 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-db-only
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: mariadb
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "MyHelm.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              job-name: {{ include "MyHelm.fullname" . }}-glpi-install
+      ports:
+        - port: 3306
+{{- end }}

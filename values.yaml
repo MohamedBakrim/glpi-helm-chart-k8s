@@ -1,0 +1,217 @@
+# Default values for myhelm.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# -- App replicas
+# Replicas for php-fpm Deployment (ignored when autoscaling.enabled=true).
+replicaCount: 1
+
+# -- PHP-FPM image (mdbak/glpi-php-fpm speaks FastCGI on 9000, not HTTP)
+# Needs nginx frontend for browser traffic. Probes below must stay tcpSocket.
+image:
+  repository: mdbak/glpi-php-fpm
+  tag: "11.0.9@sha256:647f2ca6bec8465282b75ef9a6f105c3292472a708bf7f1a0900a5629302b6a9"
+  pullPolicy: IfNotPresent
+
+nginx:
+  # Nginx frontend for php-fpm (HTTP 80 → FastCGI phpfpm:9000)
+  image:
+    repository: mdbak/glpi-nginx
+    tag: "11.0.9@sha256:c92ba4c0fe6a7be209f374312d4316d07611fb14f6a3745bc6f2be7671eae35c"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+# -- PHP-FPM Service (internal FastCGI, ClusterIP 9000)
+# Nginx frontend talks here. Ingress must NOT point here directly.
+service:
+  type: ClusterIP
+  port: 9000
+
+# -- PHP-FPM probes (tcpSocket only — httpGet will fail with connection reset)
+livenessProbe:
+  tcpSocket:
+    port: 9000
+  initialDelaySeconds: 90
+readinessProbe:
+  tcpSocket:
+    port: 9000
+  initialDelaySeconds: 60
+
+# -- Private registry pull secrets
+imagePullSecrets: []
+# -- Chart name overrides
+nameOverride: ""
+fullnameOverride: ""
+
+# -- ServiceAccount for app pods
+serviceAccount:
+  create: true
+  # false = pods do NOT mount the Kubernetes API token. Nothing in this chart
+  # calls the API, and the web-facing pods shouldn't carry credentials.
+  automount: false
+  annotations: {}
+  name: ""
+
+# -- Pod annotations/labels
+podAnnotations: {}
+podLabels: {}
+
+# -- Pod/container security (empty = cluster defaults; harden before prod)
+podSecurityContext:
+  fsGroup: 82
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 82
+  runAsGroup: 82
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+# -- Ingress (routes to nginx Service port 80, NOT php-fpm 9000)
+# Requires ingress-nginx controller + myhelm.local in hosts file. TLS via cert-manager selfsigned.
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: selfsigned
+  hosts:
+    - host: myhelm.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: myhelm-tls
+      hosts:
+        - myhelm.local
+
+# -- Gateway API HTTPRoute (disabled; enable only with Gateway controller installed)
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+  - name: gateway
+    sectionName: http
+  hostnames:
+  - chart-example.local
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /headers
+
+# -- App resources (tiny defaults for local; raise for GLPI php-fpm)
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# -- Autoscaling (disabled; when true, HPA owns replicas)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+# -- Extra volumes/volumeMounts merged into app Deployments
+volumes: []
+volumeMounts: []
+
+# -- Scheduling constraints
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- DB init Job (post-install/upgrade hook; uses mariadb client image)
+jobs:
+  dbInit:
+    enabled: true
+    image:
+      repository: library/mariadb
+      tag: "12.3.2"
+
+# -- MariaDB subchart (helmforge 2.0.3, uses library/mariadb:12.3.2)
+# Passwords come from existingSecret my-test-app-auth, NOT plaintext here.
+mariadb:
+  image:
+    repository: library/mariadb
+    tag: "12.3.2@sha256:a02fe89cb597d4375812b2eac90cf9d0775d4686daa7f7cc750ebbcad7525bbc"
+  auth:
+    existingSecret: my-test-app-auth
+    database: mydb
+    username: myuser
+  standalone:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# -- Valkey subchart (helmforge 2.0.2, Redis-compatible cache)
+valkey:
+  image:
+    repository: valkey/valkey
+    tag: "9.1.0@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
+  auth:
+    enabled: true
+    existingSecret: my-test-app-auth
+  standalone:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# -- Marketplace plugins storage (mounted /var/www/html/marketplace in php-fpm AND nginx)
+# App code itself comes from the image; only plugins persist (mirrors upstream eftechcombr/glpi).
+marketplacePersistence:
+  enabled: true
+  size: 2Gi
+  mountPath: /var/www/html/marketplace
+
+# -- DB backup CronJob (daily 2am; needs backup PVC — see backup templates)
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  size: 2Gi
+  # If the controller misses 2am (node reboot, controller hiccup), fire anyway
+  # as long as we're within 10 min — otherwise the run is silently skipped.
+  startingDeadlineSeconds: 600
+
+# -- PodDisruptionBudget (keeps 1 app pod during drains)
+pdb:
+  enabled: true
+
+# -- NetworkPolicy (mariadb allows app + db-init Job only — see templates/networkpolicy.yaml)
+networkPolicy:
+  enabled: true
+etcPersistence:
+  enabled: true
+  size: 50Mi
+  mountPath: /etc/glpi
+filesPersistence:
+  enabled: true
+  size: 10Gi
+  mountPath: /var/lib/glpi
+
+
+cronjob:
+  enabled: true
+  schedule: "*/2 * * * *"
+
+
+externalSecrets:
+  enabled: false
+  refreshInterval: 1h
+  secretStoreRef: {name: vault-backend, kind: ClusterSecretStore}
+  remoteKey: myhelm/credentials

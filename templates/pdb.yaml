@@ -1,0 +1,15 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-phpfpm
+  labels:
+    {{- include "MyHelm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: php-fpm
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "MyHelm.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: php-fpm
+{{- end }}
