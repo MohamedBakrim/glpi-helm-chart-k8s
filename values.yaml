@@ -1,27 +1,61 @@
-# Default values for myhelm.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# =============================================================================
+# MYHELM — GLPI 11 Helm chart values
+# =============================================================================
+# Every setting is commented below so you always know what it does.
+# RULE OF THUMB: change VALUES here, never inside charts/*.tgz (subcharts) —
+# everything below feeds `helm install/upgrade -f values.yaml`.
+#
+# Legend / quick facts:
+#   * uid 82  = www-data (the user the app containers run as)
+#   * uid 999 = the user mariadb/valkey subcharts run as
+#   * App CODE is NOT stored in any PVC — it ships inside the php-fpm image.
+#     Only etc / files / marketplace / backup persist (see "PERSISTENCE").
+#   * Secrets are NEVER stored in this file. They come from the pre-created
+#     Kubernetes secret `my-test-app-auth` (4 keys, see mariadb.auth below).
+#   * Full install guide + troubleshooting: "myhelm starter pack.txt" on Desktop.
+# =============================================================================
 
-# -- App replicas
-# Replicas for php-fpm Deployment (ignored when autoscaling.enabled=true).
+# -----------------------------------------------------------------------------
+# REPLICAS & MAIN IMAGE
+# -----------------------------------------------------------------------------
+
+# How many php-fpm pods to run (nginx Deployment copies this number too).
+# NOTE: 1 = single point of failure on purpose — the PVCs are ReadWriteOnce,
+# so raising this above 1 needs RWX storage first. Ignored if autoscaling is on.
 replicaCount: 1
 
-# -- PHP-FPM image (mdbak/glpi-php-fpm speaks FastCGI on 9000, not HTTP)
-# Needs nginx frontend for browser traffic. Probes below must stay tcpSocket.
+# The PHP-FPM container that runs GLPI. This image CONTAINS the GLPI 11 code
+# (29 files at /var/www/html) — nothing is downloaded at install time.
+# It speaks FastCGI on port 9000, NOT HTTP: browsers can't talk to it directly,
+# that's what the nginx Deployment below is for. Digest pin (@sha256) guarantees
+# the exact same image bits on every node/registry pull.
 image:
   repository: mdbak/glpi-php-fpm
   tag: "11.0.9@sha256:647f2ca6bec8465282b75ef9a6f105c3292472a708bf7f1a0900a5629302b6a9"
+  # IfNotPresent = reuse the node's cached image (it's digest-pinned, so cache
+  # is safe). Use "Always" only if you re-tag the same version with new content.
   pullPolicy: IfNotPresent
 
+# -----------------------------------------------------------------------------
+# NGINX FRONTEND (the pod users actually reach)
+# -----------------------------------------------------------------------------
 nginx:
-  # Nginx frontend for php-fpm (HTTP 80 → FastCGI phpfpm:9000)
+  # Public-facing web server. Accepts HTTP on 80 and forwards PHP requests to
+  # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
     repository: mdbak/glpi-nginx
     tag: "11.0.9@sha256:c92ba4c0fe6a7be209f374312d4316d07611fb14f6a3745bc6f2be7671eae35c"
     pullPolicy: IfNotPresent
+
+  # ClusterIP Service for nginx = the HTTP entry point. The Ingress and the
+  # test curl both point HERE (port 80).
   service:
     type: ClusterIP
     port: 80
+
+  # nginx resource budget. Previously missing entirely (BestEffort = first
+  # thing evicted when the node is under pressure) — these were added in 0.2.4.
+  # requests = what the scheduler reserves; limits = the hard ceiling.
   resources:
     requests:
       cpu: 50m
@@ -30,73 +64,115 @@ nginx:
       cpu: 250m
       memory: 128Mi
 
-# -- PHP-FPM Service (internal FastCGI, ClusterIP 9000)
-# Nginx frontend talks here. Ingress must NOT point here directly.
+# -----------------------------------------------------------------------------
+# PHP-FPM SERVICE & PROBES (internal plumbing)
+# -----------------------------------------------------------------------------
+
+# ClusterIP Service exposing php-fpm's FastCGI port 9000 — used ONLY by nginx.
+# The Ingress must NEVER point at this: FastCGI is not HTTP.
 service:
   type: ClusterIP
   port: 9000
 
-# -- PHP-FPM probes (tcpSocket only — httpGet will fail with connection reset)
+# Health checks for the php-fpm pod. tcpSocket ONLY — an httpGet against a
+# FastCGI port gets connection-reset and would CrashLoop the pod forever.
+# initialDelaySeconds gives GLPI time to boot before we start judging it.
 livenessProbe:
   tcpSocket:
     port: 9000
-  initialDelaySeconds: 90
+  initialDelaySeconds: 90     # restart the pod only if 9000 stays dead for 90s+
 readinessProbe:
   tcpSocket:
     port: 9000
-  initialDelaySeconds: 60
+  initialDelaySeconds: 60     # stop routing to this pod until it's up for 60s
 
-# -- Private registry pull secrets
+# -----------------------------------------------------------------------------
+# NAMING & PULL SECRETS
+# -----------------------------------------------------------------------------
+
+# For a private registry (pushed images to ECR/GHCR/Harbor), list its secret
+# names here, e.g. [{name: my-registry-key}]. Empty = public pulls.
 imagePullSecrets: []
-# -- Chart name overrides
+
+# Override the chart's name in resource names. Leave "" unless you install
+# several copies and need distinct names. fullnameOverride replaces the whole
+# generated prefix (default here: "glpi-myhelm-...").
 nameOverride: ""
 fullnameOverride: ""
 
-# -- ServiceAccount for app pods
+# -----------------------------------------------------------------------------
+# SERVICE ACCOUNT (identity of the pods inside the cluster)
+# -----------------------------------------------------------------------------
 serviceAccount:
-  create: true
-  # false = pods do NOT mount the Kubernetes API token. Nothing in this chart
+  create: true                # create a dedicated SA named "glpi-myhelm"
+  # false = pods do NOT mount a Kubernetes API token. Nothing in this chart
   # calls the API, and the web-facing pods shouldn't carry credentials.
+  # (This was `true` until 0.2.4 — it silently handed the API token to nginx.)
   automount: false
-  annotations: {}
-  name: ""
+  annotations: {}             # e.g. IAM role annotations for cloud clusters
+  name: ""                    # "" = auto-generate from the release name
 
-# -- Pod annotations/labels
-podAnnotations: {}
-podLabels: {}
+# -----------------------------------------------------------------------------
+# POD DECORATIONS (labels/annotations added to app pods)
+# -----------------------------------------------------------------------------
+podAnnotations: {}   # e.g. prometheus.io/scrape: "true"
+podLabels: {}        # extra labels, e.g. team: it
 
-# -- Pod/container security (empty = cluster defaults; harden before prod)
+# -----------------------------------------------------------------------------
+# SECURITY (who the pods run as / what they may do)
+# -----------------------------------------------------------------------------
+
+# POD-level security context → applied to phpfpm, nginx, hook jobs, cron pods.
 podSecurityContext:
-  fsGroup: 82
+  fsGroup: 82   # volumes group-owned by www-data so pods can write PVC content
+  # Only re-chown the volume when the root dir ownership looks wrong — avoids
+  # re-scanning the 10Gi files volume on every single pod start.
   fsGroupChangePolicy: OnRootMismatch
+  # Use the kernel's default syscall filter (same as mariadb/valkey subcharts);
+  # blocks exotic syscalls real apps never need. Restricted PodSecurity requires it.
   seccompProfile:
     type: RuntimeDefault
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 82
-  runAsGroup: 82
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop: [ALL]
 
-# -- Ingress (routes to nginx Service port 80, NOT php-fpm 9000)
-# Requires ingress-nginx controller + myhelm.local in hosts file. TLS via cert-manager selfsigned.
+# CONTAINER-level security context → applied to every php-image container
+# (phpfpm, nginx, install/configure/cache hook jobs, cron + its wait-init).
+# NOT applied to two containers on purpose:
+#   * verify-dir hook  → must run as root to chown fresh volumes (see 6.)
+#   * backup job       → mariadb image entrypoint starts as root, then drops.
+securityContext:
+  runAsNonRoot: true    # refuse to start if the container would run as root
+  runAsUser: 82         # explicit www-data — no trusting the image's USER line
+  runAsGroup: 82
+  allowPrivilegeEscalation: false   # no gaining privileges via setuid binaries
+  capabilities:
+    drop: [ALL]         # strip every Linux capability; nothing here needs any
+
+# -----------------------------------------------------------------------------
+# INGRESS — how users reach the site (HTTPS from outside)
+# -----------------------------------------------------------------------------
+# Requires: ingress-nginx controller + cert-manager with a ClusterIssuer
+# EXACTLY named "selfsigned" + "myhelm.local" pointing at the ingress IP
+# (hosts file / internal DNS). selfsigned = LAN/internal certs only; swap the
+# host and issuer before serving real internet traffic.
 ingress:
   enabled: true
-  className: nginx
+  className: nginx                     # which controller picks this up
   annotations:
-    cert-manager.io/cluster-issuer: selfsigned
+    cert-manager.io/cluster-issuer: selfsigned   # ask cert-manager for a cert
   hosts:
-    - host: myhelm.local
+    - host: myhelm.local               # ← change to your real hostname
       paths:
         - path: /
-          pathType: Prefix
+          pathType: Prefix             # everything under / goes to nginx
   tls:
-    - secretName: myhelm-tls
+    - secretName: myhelm-tls           # cert-manager writes the cert in here
       hosts:
         - myhelm.local
 
-# -- Gateway API HTTPRoute (disabled; enable only with Gateway controller installed)
+# -----------------------------------------------------------------------------
+# GATEWAY API (alternative to Ingress — OFF)
+# -----------------------------------------------------------------------------
+# Only turn on if your cluster runs a Gateway API controller (Istio, Envoy
+# Gateway, etc.). If you don't know what that is: leave it disabled.
 httpRoute:
   enabled: false
   annotations: {}
@@ -111,7 +187,13 @@ httpRoute:
         type: PathPrefix
         value: /headers
 
-# -- App resources (tiny defaults for local; raise for GLPI php-fpm)
+# -----------------------------------------------------------------------------
+# PHP-FPM RESOURCES (CPU/memory budget for the main app pod)
+# -----------------------------------------------------------------------------
+# requests = reserved for scheduling (guaranteed available)
+# limits   = hard ceiling; hitting the memory limit = container OOM-killed.
+# History: was 100m/128Mi for BOTH → GLPI regularly died. Now 1 CPU / 1Gi
+# ceiling with 250m/256Mi reserved — comfortable for a small team.
 resources:
   requests:
     cpu: 250m
@@ -120,96 +202,164 @@ resources:
     cpu: "1"
     memory: 1Gi
 
-# -- Autoscaling (disabled; when true, HPA owns replicas)
+# -----------------------------------------------------------------------------
+# AUTOSCALING (HPA) — OFF
+# -----------------------------------------------------------------------------
+# When enabled, an HorizontalPodAutoscaler owns the replica count between
+# minReplicas..maxReplicas, scaling on CPU%. Needs the resources.requests
+# above to compute CPU usage. OFF because 1 replica + RWO PVCs (see replicaCount).
 autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
 
-# -- Extra volumes/volumeMounts merged into app Deployments
+# -----------------------------------------------------------------------------
+# EXTRA VOLUMES (escape hatch — normally leave empty)
+# -----------------------------------------------------------------------------
+# Rarely needed: inject your own volumes/mounts into the app pods (e.g. a
+# ConfigMap or an extra PVC) without editing templates. The built-in
+# etc/files/marketplace volumes are added automatically regardless.
 volumes: []
 volumeMounts: []
 
-# -- Scheduling constraints
+# -----------------------------------------------------------------------------
+# SCHEDULING (where pods may land) — defaults
+# -----------------------------------------------------------------------------
+# nodeSelector: pin to nodes with a label (e.g. {disk: ssd})
+# tolerations:  allow pods on tainted nodes
+# affinity:     advanced rules (anti-affinity to spread replicas, etc.)
 nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# -- DB init Job (post-install/upgrade hook; uses mariadb client image)
+# -----------------------------------------------------------------------------
+# JOBS — the post-install/upgrade hook chain
+# -----------------------------------------------------------------------------
+# Order: verify-dir (w5, root) → install (w10) → configure (w20) → cache (w30).
+# This block controls the install/upgrade DB jobs.
 jobs:
   dbInit:
-    enabled: true
+    enabled: true          # disable ONLY if you're managing GLPI's DB by hand
+    # MariaDB client image used to run the DB setup/upgrade scripts.
     image:
       repository: library/mariadb
       tag: "12.3.2"
 
-# -- MariaDB subchart (helmforge 2.0.3, uses library/mariadb:12.3.2)
-# Passwords come from existingSecret my-test-app-auth, NOT plaintext here.
+# -----------------------------------------------------------------------------
+# MARIADB subchart (helmforge/mariadb 2.0.3) — the GLPI database
+# -----------------------------------------------------------------------------
+# ⚠ Passwords are NOT in this file. They come from an existing secret you must
+# create BEFORE installing, with exactly these 4 keys:
+#     mariadb-user-password, mariadb-root-password,
+#     mariadb-replication-password, valkey-password
 mariadb:
   image:
     repository: library/mariadb
     tag: "12.3.2@sha256:a02fe89cb597d4375812b2eac90cf9d0775d4686daa7f7cc750ebbcad7525bbc"
   auth:
-    existingSecret: my-test-app-auth
-    database: mydb
-    username: myuser
+    existingSecret: my-test-app-auth   # ← name of the pre-created secret
+    database: mydb                     # GLPI's database name
+    username: myuser                   # GLPI's DB user (not root)
   standalone:
     persistence:
       enabled: true
-      size: 8Gi
+      size: 8Gi          # DB data volume; ~1-2Gi used by a fresh GLPI
 
-# -- Valkey subchart (helmforge 2.0.2, Redis-compatible cache)
+# -----------------------------------------------------------------------------
+# VALKEY subchart (helmforge/valkey 2.0.2) — Redis-compatible cache/sessions
+# -----------------------------------------------------------------------------
 valkey:
   image:
     repository: valkey/valkey
     tag: "9.1.0@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
   auth:
-    enabled: true
-    existingSecret: my-test-app-auth
+    enabled: true                      # require a password (don't expose open)
+    existingSecret: my-test-app-auth   # reads key valkey-password from it
   standalone:
     persistence:
       enabled: true
-      size: 8Gi
+      size: 8Gi          # cache/sessions survive restarts; could be false+emptyDir
 
-# -- Marketplace plugins storage (mounted /var/www/html/marketplace in php-fpm AND nginx)
-# App code itself comes from the image; only plugins persist (mirrors upstream eftechcombr/glpi).
+# -----------------------------------------------------------------------------
+# PERSISTENCE — what GLPI data survives a pod restart / uninstall
+# =============================================================================
+
+# PLUGIN storage → mounted at /var/www/html/marketplace in BOTH php-fpm and
+# nginx (so installed plugins' static files are served too). App code itself
+# comes from the image — this is the only /var/www/html path that persists.
 marketplacePersistence:
-  enabled: true
+  enabled: true            # false = emptyDir (plugins vanish on restart)
   size: 2Gi
   mountPath: /var/www/html/marketplace
 
-# -- DB backup CronJob (daily 2am; needs backup PVC — see backup templates)
-backup:
-  enabled: true
-  schedule: "0 2 * * *"
-  size: 2Gi
-  # If the controller misses 2am (node reboot, controller hiccup), fire anyway
-  # as long as we're within 10 min — otherwise the run is silently skipped.
-  startingDeadlineSeconds: 600
-
-# -- PodDisruptionBudget (keeps 1 app pod during drains)
-pdb:
-  enabled: true
-
-# -- NetworkPolicy (mariadb allows app + db-init Job only — see templates/networkpolicy.yaml)
-networkPolicy:
-  enabled: true
+# CONFIG storage → GLPI's config dir: config_db.php (written by the configure
+# hook), glpicrypt.key, oauth keys. Losing this = GLPI forgets its DB.
 etcPersistence:
-  enabled: true
+  enabled: true            # false = emptyDir — NOT recommended for real use
   size: 50Mi
   mountPath: /etc/glpi
+
+# DATA storage → uploads, documents, sessions, logs (everything GLPI writes).
+# This is the big one: 10Gi default. Back this PVC up if you care about files.
 filesPersistence:
   enabled: true
   size: 10Gi
   mountPath: /var/lib/glpi
 
+# (PVCs also carry helm.sh/resource-policy: keep → they survive
+#  `helm uninstall`. To really wipe: kubectl delete pvc --all -n glpi)
 
+# -----------------------------------------------------------------------------
+# BACKUP CronJob — nightly database dump
+# -----------------------------------------------------------------------------
+# Runs mariadb-dump daily at 2am into the backup PVC (/backup/mydb-YYYY-MM-DD.sql).
+# Caveats: same-disk as the DB (copy it off-box if it matters), no retention
+# policy (one file/day accumulates). The backup PVC stays Pending until the
+# first job runs (WaitForFirstConsumer) — that's normal, and the reason you
+# must install WITHOUT --wait.
+backup:
+  enabled: true
+  schedule: "0 2 * * *"    # cron expression: daily at 02:00
+  size: 2Gi                # ~1.1MB/day used → years of room
+  # If the controller misses 2am (node reboot, controller hiccup), fire anyway
+  # as long as we're within 10 min — otherwise the run is silently skipped.
+  startingDeadlineSeconds: 600
+
+# -----------------------------------------------------------------------------
+# STABILITY / NETWORK
+# -----------------------------------------------------------------------------
+
+# PodDisruptionBudget: during voluntary drains/kubectl drain, Kubernetes may
+# evict at most 1 phpfpm pod — with replicas 1 that's "the one pod", so this
+# mainly documents intent until you go multi-replica.
+pdb:
+  enabled: true
+
+# NetworkPolicy: only the app pods + the install Job may talk to MariaDB's
+# port 3306; everyone else in the cluster is blocked from the DB.
+# (App pods themselves are NOT restricted yet — future hardening.)
+networkPolicy:
+  enabled: true
+
+# -----------------------------------------------------------------------------
+# GLPI CRONJOB — runs GLPI's own scheduled tasks (mails, reports, masks...)
+# -----------------------------------------------------------------------------
 cronjob:
   enabled: true
-  schedule: "*/2 * * * *"
+  schedule: "*/2 * * * *"  # every 2 minutes (GLPI fans out its own tasks);
+                           # guarded by concurrencyPolicy Forbid + a
+                           # database:check_schema_integrity wait-init, so it
+                           # can never race the install or pile up.
+                           # Raise to "*/5" if 2 min feels too chatty.
 
-
+# -----------------------------------------------------------------------------
+# EXTERNAL SECRETS (Vault/etc.) — OFF
+# -----------------------------------------------------------------------------
+# Alternative to the pre-created secret: if the ExternalSecrets operator is
+# installed, this can pull the same credentials from a secret store on a
+# schedule instead of you creating my-test-app-auth by hand. OFF by default —
+# turning it on requires the operator + a working ClusterSecretStore first.
 externalSecrets:
   enabled: false
   refreshInterval: 1h
