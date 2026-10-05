@@ -1,0 +1,34 @@
+# =============================================================================
+# server-values.yaml — overrides for the PRODUCTION server (k8s1 + glpi1)
+# Usage: helm install glpi myhelm-0.2.5.tgz -n glpi -f server-values.yaml
+# =============================================================================
+# Why oversized numbers: the server's StorageClass is rancher local-path with
+# allowVolumeExpansion=false — PVC sizes CANNOT be changed after creation.
+# On local-path a PVC is just a quota (not preallocated disk), so asking for
+# more costs nothing until you actually write that much data.
+
+filesPersistence:
+  size: 50Gi          # uploads/sessions/documents — the one that grows
+
+marketplacePersistence:
+  size: 5Gi           # installed plugins
+
+etcPersistence:
+  size: 100Mi         # config + crypto keys (50Mi default is fine too, cheap insurance)
+
+backup:
+  size: 10Gi          # ~1.1MB/day of SQL dumps = years of room
+
+mariadb:
+  standalone:
+    persistence:
+      size: 20Gi      # database data — biggest real consumer over time
+
+valkey:
+  standalone:
+    persistence:
+      size: 4Gi       # cache/sessions
+
+# NOTE: secrets are NOT here. my-test-app-auth must exist in the namespace
+# before install (4 keys: mariadb-user-password, mariadb-root-password,
+# mariadb-replication-password, valkey-password).

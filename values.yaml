@@ -262,6 +262,16 @@ mariadb:
     database: mydb                     # GLPI's database name
     username: myuser                   # GLPI's DB user (not root)
   standalone:
+    # Explicit resources — beats the subchart's "small" preset (250m/512Mi → 500m/1Gi).
+    # The DB is the biggest memory consumer and must NEVER be BestEffort: no
+    # requests = no scheduling guarantee; no limits = node OOM killer picks victims.
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
     persistence:
       enabled: true
       size: 8Gi          # DB data volume; ~1-2Gi used by a fresh GLPI
@@ -277,6 +287,15 @@ valkey:
     enabled: true                      # require a password (don't expose open)
     existingSecret: my-test-app-auth   # reads key valkey-password from it
   standalone:
+    # Subchart default is {} (= BestEffort — evicted first under node pressure).
+    # Small cache: a ~128M maxmemory fits comfortably under the 256Mi ceiling.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
     persistence:
       enabled: true
       size: 8Gi          # cache/sessions survive restarts; could be false+emptyDir
