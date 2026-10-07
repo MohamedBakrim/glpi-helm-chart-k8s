@@ -8,6 +8,10 @@ metadata:
   labels:
     {{- include "MyHelm.labels" . | nindent 4 }}
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes:
+    {{- toYaml (.Values.marketplacePersistence.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  {{- with .Values.marketplacePersistence.storageClass }}
+  storageClassName: {{ if eq . "-" }}{{ "" | quote }}{{ else }}{{ . | quote }}{{ end }}
+  {{- end }}
   resources: {requests: {storage: {{ .Values.marketplacePersistence.size }}}}
 {{- end }}

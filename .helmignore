@@ -1,7 +1,12 @@
 # Patterns to ignore when building packages.
 # This supports shell glob matching, relative path matching, and
 # negation (prefixed with !). Only one pattern per line.
-# Local build output (never ship nested packages)
+# Local build output — ALWAYS build there, never into the chart root:
+#   helm package . --destination dist/
+# NOTE: do NOT add a bare *.tgz rule — .helmignore matches patterns against
+# file NAMES at any depth, so it would also hide charts/mariadb-*.tgz and
+# charts/valkey-*.tgz (the vendored dependencies), making helm report
+# "missing dependencies". dist/ already keeps built packages out.
 dist/
 # Debug pods
 dbg-pod.yaml

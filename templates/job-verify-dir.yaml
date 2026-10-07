@@ -38,4 +38,8 @@ spec:
         {{- include "MyHelm.dataVolume" (dict "name" "etc-data" "claimName" (printf "%s-etc" (include "MyHelm.fullname" .)) "enabled" .Values.etcPersistence.enabled) | nindent 8 }}
         {{- include "MyHelm.dataVolume" (dict "name" "files-data" "claimName" (printf "%s-files" (include "MyHelm.fullname" .)) "enabled" .Values.filesPersistence.enabled) | nindent 8 }}
         {{- include "MyHelm.dataVolume" (dict "name" "marketplace-data" "claimName" (printf "%s-marketplace" (include "MyHelm.fullname" .)) "enabled" .Values.marketplacePersistence.enabled) | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- end }}

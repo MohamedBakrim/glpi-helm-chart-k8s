@@ -47,11 +47,18 @@ nginx:
     tag: "11.0.9@sha256:c92ba4c0fe6a7be209f374312d4316d07611fb14f6a3745bc6f2be7671eae35c"
     pullPolicy: IfNotPresent
 
-  # ClusterIP Service for nginx = the HTTP entry point. The Ingress and the
+  # The Service for nginx = the HTTP entry point. The Ingress and the
   # test curl both point HERE (port 80).
+  #   ClusterIP = cluster-internal only (needs Ingress or port-forward).
+  #   NodePort   = kube-proxy also listens on <any-node-IP>:nodePort, so the
+  #                app is reachable WITHOUT port-forward, e.g. from a worker
+  #                node: http://<worker-node-ip>:30080
   service:
-    type: ClusterIP
+    type: NodePort
     port: 80
+    # Fixed node port (30000-32767). Set only when type is NodePort; leave
+    # null/empty to let Kubernetes pick one (it stays stable once assigned).
+    nodePort: 30080
 
   # nginx resource budget. Previously missing entirely (BestEffort = first
   # thing evicted when the node is under pressure) — these were added in 0.2.4.
@@ -100,6 +107,7 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+
 # -----------------------------------------------------------------------------
 # SERVICE ACCOUNT (identity of the pods inside the cluster)
 # -----------------------------------------------------------------------------
@@ -143,6 +151,14 @@ securityContext:
   runAsUser: 82         # explicit www-data — no trusting the image's USER line
   runAsGroup: 82
   allowPrivilegeEscalation: false   # no gaining privileges via setuid binaries
+  # Nothing may be written into the image layer. The only writable paths these
+  # containers actually need is /tmp (php session + upload temp; and for nginx
+  # the pid file nginx.pid plus every *_temp path — all three are /tmp in this
+  # image's nginx.conf), so the templates mount an emptyDir there. Real data
+  # lives on the PVCs (etc/files/marketplace), which stay writable.
+  # Deliberately NOT applied to: verify-dir (must chown image paths as root)
+  # and the backup job (mariadb image entrypoint starts as root, then drops).
+  readOnlyRootFilesystem: true
   capabilities:
     drop: [ALL]         # strip every Linux capability; nothing here needs any
 
@@ -229,7 +245,27 @@ volumeMounts: []
 # nodeSelector: pin to nodes with a label (e.g. {disk: ssd})
 # tolerations:  allow pods on tainted nodes
 # affinity:     advanced rules (anti-affinity to spread replicas, etc.)
-nodeSelector: {}
+#
+# WHY THIS IS PINNED (instead of {}): the etc/files/marketplace/backup PVCs use
+# the DEFAULT StorageClass = local-path, whose PVs carry a nodeAffinity to the
+# node that provisioned them. Pods mounting those claims physically cannot land
+# anywhere else — the scheduler rejects every other node with
+# "had volume node affinity conflict". Pinning here makes that hidden hard-fail
+# explicit and readable instead of a mystery Pending pod.
+# VERIFY the value matches your cluster before installing:
+#   kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]}{"\n"}{end}'
+# TO UNPIN: move the PVCs to an RWX StorageClass first (NFS/CephFS/Longhorn-RWX)
+# — changing nodeSelector alone does nothing while local-path is underneath.
+#
+# COVERAGE: this value reaches EVERY pod the chart creates — php-fpm, nginx, the
+# 4 post-install hook Jobs, both CronJobs and the helm test pod. The bundled
+# mariadb/valkey subcharts read their OWN keys, so to land the database and
+# cache on the same node, set those too (see the mariadb: and valkey: blocks).
+#   nodeSelector:         {kubernetes.io/hostname: desktop-worker2}
+#   mariadb.nodeSelector: {kubernetes.io/hostname: desktop-worker2}
+#   valkey.nodeSelector:  {kubernetes.io/hostname: desktop-worker2}
+nodeSelector:
+  kubernetes.io/hostname: desktop-worker2
 tolerations: []
 affinity: {}
 
@@ -254,6 +290,10 @@ jobs:
 #     mariadb-user-password, mariadb-root-password,
 #     mariadb-replication-password, valkey-password
 mariadb:
+  # Same node as the app — the DB's local-path PV is node-bound, and the
+  # mariadb-dump backup job must reach it. See SCHEDULING above.
+  nodeSelector:
+    kubernetes.io/hostname: desktop-worker2
   image:
     repository: library/mariadb
     tag: "12.3.2@sha256:a02fe89cb597d4375812b2eac90cf9d0775d4686daa7f7cc750ebbcad7525bbc"
@@ -280,6 +320,9 @@ mariadb:
 # VALKEY subchart (helmforge/valkey 2.0.2) — Redis-compatible cache/sessions
 # -----------------------------------------------------------------------------
 valkey:
+  # Same node as the app — sessions/cache live in a node-bound local-path PV.
+  nodeSelector:
+    kubernetes.io/hostname: desktop-worker2
   image:
     repository: valkey/valkey
     tag: "9.1.0@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
@@ -303,14 +346,49 @@ valkey:
 # -----------------------------------------------------------------------------
 # PERSISTENCE — what GLPI data survives a pod restart / uninstall
 # =============================================================================
+#
+# STORAGE PLACEMENT — every block below (marketplace/etc/files + backup) accepts
+# these two keys. Both default to "leave it alone", so the rendered PVCs are
+# byte-identical to earlier releases until you set them:
+#
+#   storageClass: ""  → no storageClassName field → the cluster's DEFAULT class.
+#                       On this cluster that is local-path, whose PVs are pinned
+#                       to one node (see SCHEDULING above). Put a real class name
+#                       here ("nfs-storage", "longhorn", ...) to move the data
+#                       elsewhere. "-" = storageClassName: "" → skip dynamic
+#                       provisioning and bind to a pre-created PV instead.
+#
+#   accessModes: []   → falls back to ReadWriteOnce (today's behavior).
+#                       [ReadWriteMany] ONLY with a class that actually serves
+#                       RWX — otherwise the PVC never binds (stays Pending) and
+#                       every pod mounting it hangs at scheduling.
+#
+# ⚠ BOTH FIELDS ARE IMMUTABLE once a claim is Bound. Changing them on a live
+#   install makes `helm upgrade` fail with `spec.accessModes: Forbidden: field
+#   is immutable`, and Helm will NOT delete/recreate the claim for you. Real
+#   migration: back up the data → kubectl delete pvc <name> → helm upgrade
+#   (recreates it) → restore. They carry helm.sh/resource-policy: keep, so
+#   `helm uninstall` leaves them behind too.
 
-# PLUGIN storage → mounted at /var/www/html/marketplace in BOTH php-fpm and
-# nginx (so installed plugins' static files are served too). App code itself
-# comes from the image — this is the only /var/www/html path that persists.
+# PLUGIN storage → mounted at /var/www/html/marketplace in php-fpm (where
+# plugins are installed/written) and, optionally, in nginx — see nginxMount
+# below. App code itself comes from the image — this is the only /var/www/html
+# path that persists.
 marketplacePersistence:
   enabled: true            # false = emptyDir (plugins vanish on restart)
   size: 2Gi
   mountPath: /var/www/html/marketplace
+  # Also mount this claim into the NGINX pod. nginx's root is
+  # /var/www/html/public (see nginx-configmap.yaml), so /var/www/html/marketplace
+  # sits OUTSIDE the docroot and no `alias` covers it — nginx cannot serve a
+  # single byte from this volume, and the mount is what hard-pins every nginx
+  # replica to one node via the local-path PV's nodeAffinity. Set false to drop
+  # it: nginx then schedules on any node (php-fpm keeps its own mount, and
+  # FastCGI crosses nodes fine). CHECK FIRST that nothing 404s:
+  #   curl -sS -o /dev/null -w '%{http_code}\n' https://<host>/marketplace/<plugin>/<file>.js
+  nginxMount: true
+  storageClass: ""         # "" = default class (local-path) — see PERSISTENCE header
+  accessModes: []          # [] = ReadWriteOnce — see PERSISTENCE header
 
 # CONFIG storage → GLPI's config dir: config_db.php (written by the configure
 # hook), glpicrypt.key, oauth keys. Losing this = GLPI forgets its DB.
@@ -318,6 +396,8 @@ etcPersistence:
   enabled: true            # false = emptyDir — NOT recommended for real use
   size: 50Mi
   mountPath: /etc/glpi
+  storageClass: ""         # "" = default class (local-path) — see PERSISTENCE header
+  accessModes: []          # [] = ReadWriteOnce — see PERSISTENCE header
 
 # DATA storage → uploads, documents, sessions, logs (everything GLPI writes).
 # This is the big one: 10Gi default. Back this PVC up if you care about files.
@@ -325,25 +405,50 @@ filesPersistence:
   enabled: true
   size: 10Gi
   mountPath: /var/lib/glpi
+  storageClass: ""         # "" = default class (local-path) — see PERSISTENCE header
+  accessModes: []          # [] = ReadWriteOnce — see PERSISTENCE header
 
 # (PVCs also carry helm.sh/resource-policy: keep → they survive
 #  `helm uninstall`. To really wipe: kubectl delete pvc --all -n glpi)
 
 # -----------------------------------------------------------------------------
-# BACKUP CronJob — nightly database dump
+# BACKUP CronJob — nightly dump of the DB + (optionally) file data
 # -----------------------------------------------------------------------------
-# Runs mariadb-dump daily at 2am into the backup PVC (/backup/mydb-YYYY-MM-DD.sql).
-# Caveats: same-disk as the DB (copy it off-box if it matters), no retention
-# policy (one file/day accumulates). The backup PVC stays Pending until the
-# first job runs (WaitForFirstConsumer) — that's normal, and the reason you
-# must install WITHOUT --wait.
+# Runs daily at 2am into the backup PVC:
+#   /backup/<db>-YYYY-MM-DD.sql              database dump (mariadb-dump)
+#   /backup/files-YYYY-MM-DD.tar.gz          /var/lib/glpi   (if includeFiles)
+#   /backup/marketplace-YYYY-MM-DD.tar.gz    marketplace     (if includeMarketplace)
+# ...then prunes anything older than retentionDays so /backup can't fill up.
+# WARNING: same disk as everything else — a node loss takes the backups too.
+# Copy them off-box (cron/sidecar/velero); this only protects against
+# accidental deletes and app-level corruption.
+# The backup PVC stays Pending until the first job runs (WaitForFirstConsumer)
+# — that's normal, and why you must install WITHOUT --wait.
 backup:
   enabled: true
   schedule: "0 2 * * *"    # cron expression: daily at 02:00
-  size: 2Gi                # ~1.1MB/day used → years of room
+
+  # Snapshot the file PVCs next to the DB dump. Each needs its claim enabled
+  # too (filesPersistence/marketplacePersistence), and adds ~1 tar.gz/day.
+  # Restore:  kubectl cp <pod>:/backup/files-<date>.tar.gz . && tar -xzf ... -C /var/lib/glpi
+  includeFiles: true
+  includeMarketplace: true
+
+  # Delete *.sql / *.tar.gz in /backup older than N days (mtime). 0 = never
+  # prune = old behavior (files accumulate forever). With tarballs on, keep a
+  # number: 2Gi fills fast if files/ grows.
+  retentionDays: 7
+
+  # Must fit (retentionDays × daily output). SQL is tiny (~1MB/day); the
+  # tarballs are the unknown — watch `df -h /backup` in the job log and raise
+  # this before it fills (a full PVC = the job fails, nothing is pruned).
+  size: 2Gi
+
   # If the controller misses 2am (node reboot, controller hiccup), fire anyway
   # as long as we're within 10 min — otherwise the run is silently skipped.
   startingDeadlineSeconds: 600
+  storageClass: ""         # "" = default class (local-path) — see PERSISTENCE header
+  accessModes: []          # [] = ReadWriteOnce — see PERSISTENCE header
 
 # -----------------------------------------------------------------------------
 # STABILITY / NETWORK

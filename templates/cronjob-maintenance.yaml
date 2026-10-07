@@ -43,6 +43,7 @@ spec:
                 - {name: etc-data, mountPath: /etc/glpi}
                 - {name: files-data, mountPath: /var/lib/glpi}
                 - {name: marketplace-data, mountPath: {{ .Values.marketplacePersistence.mountPath }}}
+                - {name: tmp, mountPath: /tmp}
           containers:
             - name: cron
               image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -61,8 +62,16 @@ spec:
                 - {name: etc-data, mountPath: /etc/glpi}
                 - {name: files-data, mountPath: /var/lib/glpi}
                 - {name: marketplace-data, mountPath: {{ .Values.marketplacePersistence.mountPath }}}
+                - {name: tmp, mountPath: /tmp}
           volumes:
             {{- include "MyHelm.dataVolume" (dict "name" "etc-data" "claimName" (printf "%s-etc" (include "MyHelm.fullname" .)) "enabled" .Values.etcPersistence.enabled) | nindent 12 }}
             {{- include "MyHelm.dataVolume" (dict "name" "files-data" "claimName" (printf "%s-files" (include "MyHelm.fullname" .)) "enabled" .Values.filesPersistence.enabled) | nindent 12 }}
             {{- include "MyHelm.dataVolume" (dict "name" "marketplace-data" "claimName" (printf "%s-marketplace" (include "MyHelm.fullname" .)) "enabled" .Values.marketplacePersistence.enabled) | nindent 12 }}
+            # Shared scratch for both containers (readOnlyRootFilesystem)
+            - name: tmp
+              emptyDir: {}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
 {{- end }}

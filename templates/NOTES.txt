@@ -33,3 +33,16 @@
   echo "Visit http://127.0.0.1:8080 to use your application"
   kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
 {{- end }}
+
+2. Scheduling — pods are pinned by nodeSelector:
+{{- if .Values.nodeSelector }}
+{{- range $k, $v := .Values.nodeSelector }}
+     {{ $k }} = {{ $v }}
+{{- end }}
+{{- else }}
+     (not pinned — free to land on any node)
+{{- end }}
+   Check where they landed:
+     kubectl get pods --namespace {{ .Release.Namespace }} -o wide
+   NOTE: the local-path PVs are node-bound — see SCHEDULING in values.yaml
+   before changing nodeSelector on a live install.

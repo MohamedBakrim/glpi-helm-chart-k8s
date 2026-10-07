@@ -9,7 +9,10 @@ metadata:
     {{- include "MyHelm.labels" . | nindent 4 }}
 spec:
   accessModes:
-    - ReadWriteOnce
+    {{- toYaml (.Values.backup.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  {{- with .Values.backup.storageClass }}
+  storageClassName: {{ if eq . "-" }}{{ "" | quote }}{{ else }}{{ . | quote }}{{ end }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.backup.size }}

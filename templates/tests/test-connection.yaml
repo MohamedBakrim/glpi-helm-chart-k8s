@@ -13,3 +13,7 @@ spec:
       command: ['wget']
       args: ['{{ include "MyHelm.fullname" . }}:{{ .Values.service.port }}']
   restartPolicy: Never
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

@@ -36,12 +36,52 @@ spec:
                     secretKeyRef:
                       name: {{ .Values.mariadb.auth.existingSecret }}
                       key: mariadb-user-password
-              command: [sh, -c, "mariadb-dump -h $DB_HOST -u $DB_USER -p\"$DB_PASSWORD\" $DB_NAME > /backup/$DB_NAME-$(date +%F).sql; ls -lh /backup"]
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  D=$(date +%F)
+                  echo "[backup] dumping database $DB_NAME"
+                  mariadb-dump -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" > "/backup/$DB_NAME-$D.sql"
+                  {{- if and .Values.backup.includeFiles .Values.filesPersistence.enabled }}
+                  echo "[backup] archiving {{ .Values.filesPersistence.mountPath }}"
+                  tar -czf "/backup/files-$D.tar.gz" -C /src/files .
+                  {{- end }}
+                  {{- if and .Values.backup.includeMarketplace .Values.marketplacePersistence.enabled }}
+                  echo "[backup] archiving {{ .Values.marketplacePersistence.mountPath }}"
+                  tar -czf "/backup/marketplace-$D.tar.gz" -C /src/marketplace .
+                  {{- end }}
+                  {{- if .Values.backup.retentionDays }}
+                  echo "[backup] pruning artifacts older than {{ .Values.backup.retentionDays }}d"
+                  find /backup -maxdepth 1 -type f \( -name '*.sql' -o -name '*.tar.gz' \) -mtime +{{ .Values.backup.retentionDays }} -delete
+                  {{- end }}
+                  echo "[backup] done"
+                  ls -lh /backup
+                  df -h /backup
               volumeMounts:
                 - name: backup
                   mountPath: /backup
+                {{- if and .Values.backup.includeFiles .Values.filesPersistence.enabled }}
+                - name: files-data
+                  mountPath: /src/files
+                {{- end }}
+                {{- if and .Values.backup.includeMarketplace .Values.marketplacePersistence.enabled }}
+                - name: marketplace-data
+                  mountPath: /src/marketplace
+                {{- end }}
           volumes:
             - name: backup
               persistentVolumeClaim:
                 claimName: {{ include "MyHelm.fullname" . }}-backup
+            {{- if and .Values.backup.includeFiles .Values.filesPersistence.enabled }}
+            {{- include "MyHelm.dataVolume" (dict "name" "files-data" "claimName" (printf "%s-files" (include "MyHelm.fullname" .)) "enabled" .Values.filesPersistence.enabled) | nindent 12 }}
+            {{- end }}
+            {{- if and .Values.backup.includeMarketplace .Values.marketplacePersistence.enabled }}
+            {{- include "MyHelm.dataVolume" (dict "name" "marketplace-data" "claimName" (printf "%s-marketplace" (include "MyHelm.fullname" .)) "enabled" .Values.marketplacePersistence.enabled) | nindent 12 }}
+            {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
 {{- end }}

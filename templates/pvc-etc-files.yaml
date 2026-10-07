@@ -8,7 +8,11 @@ metadata:
   labels:
     {{- include "MyHelm.labels" . | nindent 4 }}
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes:
+    {{- toYaml (.Values.etcPersistence.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  {{- with .Values.etcPersistence.storageClass }}
+  storageClassName: {{ if eq . "-" }}{{ "" | quote }}{{ else }}{{ . | quote }}{{ end }}
+  {{- end }}
   resources: {requests: {storage: {{ .Values.etcPersistence.size }}}}
 {{- end }}
 ---
@@ -22,6 +26,10 @@ metadata:
   labels:
     {{- include "MyHelm.labels" . | nindent 4 }}
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes:
+    {{- toYaml (.Values.filesPersistence.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
+  {{- with .Values.filesPersistence.storageClass }}
+  storageClassName: {{ if eq . "-" }}{{ "" | quote }}{{ else }}{{ . | quote }}{{ end }}
+  {{- end }}
   resources: {requests: {storage: {{ .Values.filesPersistence.size }}}}
 {{- end }}
