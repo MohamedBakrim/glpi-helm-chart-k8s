@@ -31,7 +31,7 @@ replicaCount: 1
 # the exact same image bits on every node/registry pull.
 image:
   repository: mdbak/glpi-php-fpm
-  tag: "11.0.9@sha256:647f2ca6bec8465282b75ef9a6f105c3292472a708bf7f1a0900a5629302b6a9"
+  tag: "11.0.11@sha256:10a17a227e3f4d8a8c9125809b31909e1263de4f30a6d5f4715dcbfebc99f852"
   # IfNotPresent = reuse the node's cached image (it's digest-pinned, so cache
   # is safe). Use "Always" only if you re-tag the same version with new content.
   pullPolicy: IfNotPresent
@@ -39,7 +39,7 @@ image:
 # -----------------------------------------------------------------------------
 # NGINX FRONTEND (the pod users actually reach)
 # -----------------------------------------------------------------------------
-nginx:
+nginx:  
   # Public-facing web server. Accepts HTTP on 80 and forwards PHP requests to
   # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
@@ -49,16 +49,19 @@ nginx:
 
   # The Service for nginx = the HTTP entry point. The Ingress and the
   # test curl both point HERE (port 80).
-  #   ClusterIP = cluster-internal only (needs Ingress or port-forward).
-  #   NodePort   = kube-proxy also listens on <any-node-IP>:nodePort, so the
-  #                app is reachable WITHOUT port-forward, e.g. from a worker
-  #                node: http://<worker-node-ip>:30080
+  #   ClusterIP = cluster-internal only. This is the default since the
+  #               external front door is the Ingress (443): the controller
+  #               reaches this service from inside the cluster, so nothing
+  #               needs to listen on the node's ports anymore.
+  #   NodePort  = flip type back (and set nodePort below) only if you need
+  #               http://<node-ip>:<nodePort> WITHOUT an ingress, e.g. a
+  #               quick smoke test with the ingress uninstalled.
   service:
-    type: NodePort
+    type: ClusterIP
     port: 80
-    # Fixed node port (30000-32767). Set only when type is NodePort; leave
-    # null/empty to let Kubernetes pick one (it stays stable once assigned).
-    nodePort: 30080
+    # Rendered ONLY when type is NodePort (templates/service.yaml guards it).
+    # Fixed port 30000-32767; leave null to let Kubernetes pick one.
+    nodePort: null
 
   # nginx resource budget. Previously missing entirely (BestEffort = first
   # thing evicted when the node is under pressure) — these were added in 0.2.4.
