@@ -12,7 +12,7 @@
 #     Only etc / files / marketplace / backup persist (see "PERSISTENCE").
 #   * Secrets are NEVER stored in this file. They come from the pre-created
 #     Kubernetes secret `my-test-app-auth` (4 keys, see mariadb.auth below).
-#   * Full install guide + troubleshooting: "myhelm starter pack.txt" on Desktop.
+#   * Full install guide: see README.md in the repo root.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -39,12 +39,15 @@ image:
 # -----------------------------------------------------------------------------
 # NGINX FRONTEND (the pod users actually reach)
 # -----------------------------------------------------------------------------
-nginx:  
+nginx:
   # Public-facing web server. Accepts HTTP on 80 and forwards PHP requests to
   # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
     repository: mdbak/glpi-nginx
-    tag: "11.0.9@sha256:c92ba4c0fe6a7be209f374312d4316d07611fb14f6a3745bc6f2be7671eae35c"
+    # Aligned with the app image / Chart.yaml appVersion (11.0.11) so nginx
+    # serves the matching GLPI static assets (css/js). Verified to exist on
+    # Docker Hub (digest = manifest-list digest of tag 11.0.11).
+    tag: "11.0.11@sha256:22b85745ae82567e5bc8d5a6dc55b95e9ccb17eaad54d7c330d30d0ac888a654"
     pullPolicy: IfNotPresent
 
   # The Service for nginx = the HTTP entry point. The Ingress and the
@@ -249,13 +252,19 @@ volumeMounts: []
 # tolerations:  allow pods on tainted nodes
 # affinity:     advanced rules (anti-affinity to spread replicas, etc.)
 #
-# WHY THIS IS PINNED (instead of {}): the etc/files/marketplace/backup PVCs use
-# the DEFAULT StorageClass = local-path, whose PVs carry a nodeAffinity to the
+# WHY YOU MAY WANT TO PIN: the etc/files/marketplace/backup PVCs use the
+# DEFAULT StorageClass = local-path, whose PVs carry a nodeAffinity to the
 # node that provisioned them. Pods mounting those claims physically cannot land
 # anywhere else — the scheduler rejects every other node with
-# "had volume node affinity conflict". Pinning here makes that hidden hard-fail
-# explicit and readable instead of a mystery Pending pod.
-# VERIFY the value matches your cluster before installing:
+# "had volume node affinity conflict". Setting nodeSelector here makes that
+# hidden hard-fail explicit and readable instead of a mystery Pending pod.
+# DEFAULT IS EMPTY ON PURPOSE: pinning to one hostname is site-specific, so
+# this ships as {} (any node). If you use local-path/RWO storage, set it to
+# YOUR node, e.g.:
+#   nodeSelector:         {kubernetes.io/hostname: <your-node>}
+#   mariadb.nodeSelector: {kubernetes.io/hostname: <your-node>}
+#   valkey.nodeSelector:  {kubernetes.io/hostname: <your-node>}
+# VERIFY which node a bound PV belongs to before installing:
 #   kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]}{"\n"}{end}'
 # TO UNPIN: move the PVCs to an RWX StorageClass first (NFS/CephFS/Longhorn-RWX)
 # — changing nodeSelector alone does nothing while local-path is underneath.
@@ -264,11 +273,7 @@ volumeMounts: []
 # 4 post-install hook Jobs, both CronJobs and the helm test pod. The bundled
 # mariadb/valkey subcharts read their OWN keys, so to land the database and
 # cache on the same node, set those too (see the mariadb: and valkey: blocks).
-#   nodeSelector:         {kubernetes.io/hostname: glpi1.corp.eolcenter.net}
-#   mariadb.nodeSelector: {kubernetes.io/hostname: glpi1.corp.eolcenter.net}
-#   valkey.nodeSelector:  {kubernetes.io/hostname: glpi1.corp.eolcenter.net}
-nodeSelector:
-  kubernetes.io/hostname: glpi1.corp.eolcenter.net
+nodeSelector: {}
 tolerations: []
 affinity: {}
 
@@ -293,10 +298,11 @@ jobs:
 #     mariadb-user-password, mariadb-root-password,
 #     mariadb-replication-password, valkey-password
 mariadb:
-  # Same node as the app — the DB's local-path PV is node-bound, and the
-  # mariadb-dump backup job must reach it. See SCHEDULING above.
-  nodeSelector:
-    kubernetes.io/hostname: glpi1.corp.eolcenter.net
+  # Empty by default (site-specific). With local-path/RWO storage, set the
+  # SAME node as the app — the DB's local-path PV is node-bound, and the
+  # mariadb-dump backup job must reach it. See SCHEDULING above, e.g.:
+  #   nodeSelector: {kubernetes.io/hostname: <your-node>}
+  nodeSelector: {}
   image:
     repository: library/mariadb
     tag: "12.3.2@sha256:a02fe89cb597d4375812b2eac90cf9d0775d4686daa7f7cc750ebbcad7525bbc"
@@ -323,9 +329,10 @@ mariadb:
 # VALKEY subchart (helmforge/valkey 2.0.2) — Redis-compatible cache/sessions
 # -----------------------------------------------------------------------------
 valkey:
-  # Same node as the app — sessions/cache live in a node-bound local-path PV.
-  nodeSelector:
-    kubernetes.io/hostname: glpi1.corp.eolcenter.net
+  # Empty by default (site-specific). With local-path/RWO storage, set the
+  # SAME node as the app — sessions/cache live in a node-bound local-path PV.
+  #   nodeSelector: {kubernetes.io/hostname: <your-node>}
+  nodeSelector: {}
   image:
     repository: valkey/valkey
     tag: "9.1.0@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"

@@ -9,7 +9,7 @@ dependencies:
   name: valkey
   repository: https://repo.helmforge.dev
   version: 2.0.2
-description: A Helm chart for Kubernetes
+description: GLPI 11 (PHP-FPM + nginx + MariaDB + Valkey) on Kubernetes
 name: myhelm
 type: application
 version: 0.2.10

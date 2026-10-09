@@ -11,7 +11,9 @@ spec:
     - name: wget
       image: busybox
       command: ['wget']
-      args: ['{{ include "MyHelm.fullname" . }}:{{ .Values.service.port }}']
+      # <fullname> is the nginx Service (HTTP on 80) — NOT the php-fpm
+      # FastCGI Service on 9000, which wget cannot talk to.
+      args: ['{{ include "MyHelm.fullname" . }}:{{ .Values.nginx.service.port }}']
   restartPolicy: Never
   {{- with .Values.nodeSelector }}
   nodeSelector:
