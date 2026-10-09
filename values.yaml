@@ -264,11 +264,11 @@ volumeMounts: []
 # 4 post-install hook Jobs, both CronJobs and the helm test pod. The bundled
 # mariadb/valkey subcharts read their OWN keys, so to land the database and
 # cache on the same node, set those too (see the mariadb: and valkey: blocks).
-#   nodeSelector:         {kubernetes.io/hostname: desktop-worker2}
-#   mariadb.nodeSelector: {kubernetes.io/hostname: desktop-worker2}
-#   valkey.nodeSelector:  {kubernetes.io/hostname: desktop-worker2}
+#   nodeSelector:         {kubernetes.io/hostname: glpi1.corp.eolcenter.net}
+#   mariadb.nodeSelector: {kubernetes.io/hostname: glpi1.corp.eolcenter.net}
+#   valkey.nodeSelector:  {kubernetes.io/hostname: glpi1.corp.eolcenter.net}
 nodeSelector:
-  kubernetes.io/hostname: desktop-worker2
+  kubernetes.io/hostname: glpi1.corp.eolcenter.net
 tolerations: []
 affinity: {}
 
@@ -296,7 +296,7 @@ mariadb:
   # Same node as the app — the DB's local-path PV is node-bound, and the
   # mariadb-dump backup job must reach it. See SCHEDULING above.
   nodeSelector:
-    kubernetes.io/hostname: desktop-worker2
+    kubernetes.io/hostname: glpi1.corp.eolcenter.net
   image:
     repository: library/mariadb
     tag: "12.3.2@sha256:a02fe89cb597d4375812b2eac90cf9d0775d4686daa7f7cc750ebbcad7525bbc"
@@ -325,7 +325,7 @@ mariadb:
 valkey:
   # Same node as the app — sessions/cache live in a node-bound local-path PV.
   nodeSelector:
-    kubernetes.io/hostname: desktop-worker2
+    kubernetes.io/hostname: glpi1.corp.eolcenter.net
   image:
     repository: valkey/valkey
     tag: "9.1.0@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
