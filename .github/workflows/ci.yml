@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, MAIN]
+  pull_request:
+
+jobs:
+  lint:
+    name: helm lint & template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: helm lint
+        run: helm lint .
+
+      - name: helm template (default values)
+        run: helm template ci . > /dev/null
+
+      - name: helm template (HTTPRoute enabled)
+        run: helm template ci . --set httpRoute.enabled=true > /dev/null
