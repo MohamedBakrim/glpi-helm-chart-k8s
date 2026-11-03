@@ -25,21 +25,18 @@
 replicaCount: 1
 
 # The PHP-FPM container that runs GLPI. This image CONTAINS the GLPI 12 code
-<<<<<<< HEAD
+
 # (shipped at /var/www/html) — nothing is downloaded at install time.
-=======
+
 # (29 files at /var/www/html) — nothing is downloaded at install time.
->>>>>>> 205828de813116c4316f4b5b5c2dba62a2d7e8f7
+
 # It speaks FastCGI on port 9000, NOT HTTP: browsers can't talk to it directly,
 # that's what the nginx Deployment below is for. Digest pin (@sha256) guarantees
 # the exact same image bits on every node/registry pull.
 image:
   repository: mdbak/glpi-php-fpm
-<<<<<<< HEAD
-  tag: "12.0.0@sha256:2de6ad6765e95ba9803ada0cf07b5ae8db4c216ea7096ac0210c6e8e17ecaf41"
-=======
   tag: "12.0.8@sha256:3c3f6a48cb5a9002e916de6ac7a1a39a98e41edd369e8f7c3bb039934b12a147"
->>>>>>> 205828de813116c4316f4b5b5c2dba62a2d7e8f7
+
   # IfNotPresent = reuse the node's cached image (it's digest-pinned, so cache
   # is safe). Use "Always" only if you re-tag the same version with new content.
   pullPolicy: IfNotPresent
@@ -52,17 +49,14 @@ nginx:
   # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
     repository: mdbak/glpi-nginx
-<<<<<<< HEAD
-    # Aligned with the app image / Chart.yaml appVersion (12.0.0) so nginx
-    # serves the matching GLPI static assets (css/js). Verified to exist on
-    # Docker Hub (digest = manifest-list digest of tag 12.0.0).
-    tag: "12.0.0@sha256:70bbe29cab722074986afec9c2854bfb1f212c8ed00b46f291163332c53ec871"
-=======
+
+
+
     # Aligned with the app image / Chart.yaml appVersion (12.0.8) so nginx
     # serves the matching GLPI static assets (css/js). Verified to exist on
     # Docker Hub (digest = manifest-list digest of tag 12.0.8; PHP 8.4.27).
     tag: "12.0.8@sha256:057aa912e369521e07b98bf38cbc2fc40f48c5e8fdefe1b4d0e6d7f0d41c075a"
->>>>>>> 205828de813116c4316f4b5b5c2dba62a2d7e8f7
+
     pullPolicy: IfNotPresent
 
   # The Service for nginx = the HTTP entry point. The Ingress and the
