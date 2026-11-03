@@ -1,0 +1,30 @@
+{{- if .Values.php.opcache.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "MyHelm.fullname" . }}-php-ini
+  labels:
+    {{- include "MyHelm.labels" . | nindent 4 }}
+    app.kubernetes.io/component: php-fpm
+data:
+  # FILE NAME MATTERS: PHP parses /usr/local/etc/php/conf.d/*.ini in
+  # alphabetical order, and "zz-" sorts AFTER the image's baked-in
+  # "99-glpi.ini" (which already switches opcache ON). So everything below
+  # OVERRIDES the image defaults instead of duplicating or fighting them.
+  # The extension itself is loaded by docker-php-ext-opcache.ini — never
+  # repeat "zend_extension=opcache" here, that would double-load it.
+  zz-opcache.ini: |
+    ; Managed by Helm — pod edits are wiped on the next restart.
+    ; Source of truth: values.yaml → php.opcache
+    [opcache]
+    opcache.enable = 1
+    opcache.memory_consumption = {{ .Values.php.opcache.memoryConsumption }}
+    opcache.interned_strings_buffer = {{ .Values.php.opcache.internedStringsBuffer }}
+    opcache.max_accelerated_files = {{ .Values.php.opcache.maxAcceleratedFiles }}
+    ; 0 = production mode: bytecode is trusted forever (fastest). PHP then
+    ; IGNORES revalidate_freq below. Flip via php.opcache.validateTimestamps.
+    opcache.validate_timestamps = {{ ternary 1 0 .Values.php.opcache.validateTimestamps }}
+    opcache.revalidate_freq = {{ .Values.php.opcache.revalidateFreq }}
+    ; GLPI + plugins read docblocks at runtime (routing/API) — keep true.
+    opcache.save_comments = {{ ternary 1 0 .Values.php.opcache.saveComments }}
+{{- end }}

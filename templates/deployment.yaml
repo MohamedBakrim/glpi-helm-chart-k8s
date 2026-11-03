@@ -15,10 +15,20 @@ spec:
       app.kubernetes.io/component: php-fpm
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
+        {{- if .Values.php.opcache.enabled }}
+        # subPath ConfigMap mounts do NOT hot-reload; hashing the rendered
+        # ConfigMap forces a rolling restart when opcache values change.
+        checksum/php-ini: {{ include (print $.Template.BasePath "/php-ini-configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.adCa.enabled }}
+        # Same reason as php-ini: the merged CA bundle is built at pod START,
+        # so a cert change only lands on a rolling restart (helm upgrade does it).
+        checksum/ad-ca: {{ include (print $.Template.BasePath "/ad-ca-configmap.yaml") . | sha256sum }}
+        {{- end }}
       labels:
         {{- include "MyHelm.labels" . | nindent 8 }}
         app.kubernetes.io/component: php-fpm
@@ -34,6 +44,29 @@ spec:
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.adCa.enabled }}
+      initContainers:
+        # Build the combined CA bundle at pod start: image's public bundle +
+        # the self-signed AD DC certs → one file in the shared emptyDir.
+        # Why: readOnlyRootFilesystem + non-root forbid update-ca-certificates,
+        # and swapping the system bundle outright would kill public TLS trust.
+        # Main container mounts the result OVER the original bundle path
+        # (subPath), so PHP/OpenSSL/libldap pick it up with zero app config.
+        - name: merge-ca
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - cat /etc/ssl/certs/ca-certificates.crt /ad-ca/ad-ca.crt > /bundle/ca-certificates.crt
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - {name: ad-ca, mountPath: /ad-ca, readOnly: true}
+            - {name: ca-bundle, mountPath: /bundle}
       {{- end }}
       containers:
         - name: {{ .Chart.Name }}
@@ -80,18 +113,52 @@ spec:
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            # PHP scans /usr/local/etc/php/conf.d/*.ini at startup; mounting
+            # the file here overrides the image's baked-in 99-glpi.ini opcache
+            # block (zz- sorts last). readOnly + subPath keeps the rest of the
+            # image's conf.d intact and immutable.
+            {{- if .Values.php.opcache.enabled }}
+            - name: php-ini
+              mountPath: /usr/local/etc/php/conf.d/zz-opcache.ini
+              subPath: zz-opcache.ini
+              readOnly: true
+            {{- end }}
             - name: etc-data
               mountPath: /etc/glpi
             - name: files-data
               mountPath: /var/lib/glpi
             - name: marketplace-data
               mountPath: {{ .Values.marketplacePersistence.mountPath }}
+            {{- if .Values.adCa.enabled }}
+            # Overlay the init-built bundle (system CAs + AD DC certs) on the
+            # path OpenSSL/libldap read by default. subPath = single file,
+            # rest of /etc/ssl stays from the image. readOnly: it's built by
+            # merge-ca once per pod start; change = new pod (checksum above).
+            - name: ca-bundle
+              mountPath: /etc/ssl/certs/ca-certificates.crt
+              subPath: ca-certificates.crt
+              readOnly: true
+            {{- end }}
             # Writable scratch for readOnlyRootFilesystem (php sessions/uploads)
             - name: tmp
               mountPath: /tmp
       volumes:
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.adCa.enabled }}
+        # ad-ca: the raw self-signed DC certs (consumed by merge-ca only)
+        - name: ad-ca
+          configMap:
+            name: {{ include "MyHelm.fullname" . }}-ad-ca
+        # ca-bundle: shared scratch where merge-ca writes the final bundle
+        - name: ca-bundle
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.php.opcache.enabled }}
+        - name: php-ini
+          configMap:
+            name: {{ include "MyHelm.fullname" . }}-php-ini
         {{- end }}
         {{- include "MyHelm.dataVolume" (dict "name" "etc-data" "claimName" (printf "%s-etc" (include "MyHelm.fullname" .)) "enabled" .Values.etcPersistence.enabled) | nindent 8 }}
         {{- include "MyHelm.dataVolume" (dict "name" "files-data" "claimName" (printf "%s-files" (include "MyHelm.fullname" .)) "enabled" .Values.filesPersistence.enabled) | nindent 8 }}

@@ -25,13 +25,21 @@
 replicaCount: 1
 
 # The PHP-FPM container that runs GLPI. This image CONTAINS the GLPI 12 code
+<<<<<<< HEAD
 # (shipped at /var/www/html) — nothing is downloaded at install time.
+=======
+# (29 files at /var/www/html) — nothing is downloaded at install time.
+>>>>>>> 205828de813116c4316f4b5b5c2dba62a2d7e8f7
 # It speaks FastCGI on port 9000, NOT HTTP: browsers can't talk to it directly,
 # that's what the nginx Deployment below is for. Digest pin (@sha256) guarantees
 # the exact same image bits on every node/registry pull.
 image:
   repository: mdbak/glpi-php-fpm
+<<<<<<< HEAD
   tag: "12.0.0@sha256:2de6ad6765e95ba9803ada0cf07b5ae8db4c216ea7096ac0210c6e8e17ecaf41"
+=======
+  tag: "12.0.8@sha256:3c3f6a48cb5a9002e916de6ac7a1a39a98e41edd369e8f7c3bb039934b12a147"
+>>>>>>> 205828de813116c4316f4b5b5c2dba62a2d7e8f7
   # IfNotPresent = reuse the node's cached image (it's digest-pinned, so cache
   # is safe). Use "Always" only if you re-tag the same version with new content.
   pullPolicy: IfNotPresent
@@ -44,10 +52,17 @@ nginx:
   # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
     repository: mdbak/glpi-nginx
+<<<<<<< HEAD
     # Aligned with the app image / Chart.yaml appVersion (12.0.0) so nginx
     # serves the matching GLPI static assets (css/js). Verified to exist on
     # Docker Hub (digest = manifest-list digest of tag 12.0.0).
     tag: "12.0.0@sha256:70bbe29cab722074986afec9c2854bfb1f212c8ed00b46f291163332c53ec871"
+=======
+    # Aligned with the app image / Chart.yaml appVersion (12.0.8) so nginx
+    # serves the matching GLPI static assets (css/js). Verified to exist on
+    # Docker Hub (digest = manifest-list digest of tag 12.0.8; PHP 8.4.27).
+    tag: "12.0.8@sha256:057aa912e369521e07b98bf38cbc2fc40f48c5e8fdefe1b4d0e6d7f0d41c075a"
+>>>>>>> 205828de813116c4316f4b5b5c2dba62a2d7e8f7
     pullPolicy: IfNotPresent
 
   # The Service for nginx = the HTTP entry point. The Ingress and the
@@ -177,18 +192,18 @@ securityContext:
 # host and issuer before serving real internet traffic.
 ingress:
   enabled: true
-  className: nginx                     # which controller picks this up
+  className: nginx
   annotations:
-    cert-manager.io/cluster-issuer: selfsigned   # ask cert-manager for a cert
+    cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: myhelm.local               # ← change to your real hostname
+    - host: support.corp.eolcenter.net
       paths:
         - path: /
-          pathType: Prefix             # everything under / goes to nginx
+          pathType: Prefix
   tls:
-    - secretName: myhelm-tls           # cert-manager writes the cert in here
+    - secretName: support-tls
       hosts:
-        - myhelm.local
+        - support.corp.eolcenter.net
 
 # -----------------------------------------------------------------------------
 # GATEWAY API (alternative to Ingress — OFF)
@@ -225,6 +240,47 @@ resources:
     memory: 1Gi
 
 # -----------------------------------------------------------------------------
+# PHP-FPM OPCACHE (bytecode cache tuning)
+# -----------------------------------------------------------------------------
+# OPcache is ALREADY compiled into the php-fpm image and switched ON by the
+# image's own /usr/local/etc/php/conf.d/99-glpi.ini. This block does NOT
+# install it — it lets you retune it WITHOUT rebuilding the image. When
+# enabled, the chart mounts a ConfigMap as conf.d/zz-opcache.ini (sorts
+# AFTER 99-glpi, so it wins) and rolls the pods whenever you change a value
+# (checksum annotation — subPath mounts don't hot-reload).
+#
+# The defaults below are IDENTICAL to what the image ships today, so
+# installing with this unchanged is a no-op — flip a value only to change it.
+php:
+  opcache:
+    enabled: false
+    # Shared-memory size IN MEGABYTES for compiled bytecode (not MiB, plain
+    # int). Keep headroom under the pod's memory limit: opcache SHM is carved
+    # out of the same 1Gi ceiling as PHP-FPM workers. Undersized = cache
+    # thrashing (GLPI ships thousands of files); oversized = wasted RAM.
+    memoryConsumption: 256
+    # MB of interned-strings buffer (function/class names, literals). GLPI's
+    # namespace-heavy codebase overflows the PHP default of 8 fast — 16 is
+    # the floor; raise to 32 if the logs show "interned strings buffer overflow".
+    internedStringsBuffer: 16
+    # Max distinct PHP files opcache may hold. GLPI core + common plugins is
+    # ~8-10k files; undershooting means late files are simply never cached.
+    maxAcceleratedFiles: 20000
+    # validate_timestamps=false (image default) = "production mode": bytecode
+    # is trusted FOREVER and revalidate_freq below is IGNORED. Fastest, but
+    # after you push new GLPI/plugin code you MUST restart the pods (helm
+    # upgrade does this for you on image tag changes; otherwise
+    # kubectl rollout restart deploy/<fullname>-phpfpm). Set true (and
+    # revalidateFreq=2-ish) on staging so file edits show up without restarts.
+    validateTimestamps: false
+    # Seconds between re-stat checks — ONLY honored when validateTimestamps
+    # is true. Higher = fewer stat() calls, slower pickup of file changes.
+    revalidateFreq: 60
+    # Keep PHPDoc comments in cached bytecode. GLPI's API/routing introspects
+    # docblocks at runtime — turning this off can break GLPI. Leave true.
+    saveComments: true
+
+# -----------------------------------------------------------------------------
 # AUTOSCALING (HPA) — OFF
 # -----------------------------------------------------------------------------
 # When enabled, an HorizontalPodAutoscaler owns the replica count between
@@ -235,6 +291,67 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 100
   targetCPUUtilizationPercentage: 80
+
+# -----------------------------------------------------------------------------
+# AD LDAPS TRUST — the self-signed Active Directory DC certificates
+# -----------------------------------------------------------------------------
+# AD-DNS-SRV1/2.corp.eolcenter.net serve SELF-SIGNED certs (no enterprise CA
+# exists to install), so every ldaps:// bind fails with "self-signed certificate"
+# unless we trust the certs themselves.
+#
+# HOW IT WORKS: the PEM below becomes a ConfigMap; a merge init container in the
+# php-fpm and cron pods cats the image's system bundle + these certs into an
+# emptyDir, mounted over /etc/ssl/certs/ca-certificates.crt. Public trust
+# (marketplace/SMTP/updates) is untouched — the certs are ADDED, not swapped in.
+#
+# RULES:
+#  * In GLPI use the full FQDN (AD-DNS-SRV1.corp.eolcenter.net) as LDAP host —
+#    the certs' SAN contains only that name; short name or IP fails hostname check.
+#  * Certs are public data → ConfigMap, never a Secret.
+#  * Both certs expire Oct 2028: paste the renewed PEMs here + helm upgrade.
+adCa:
+  enabled: true
+  certs: |
+    -----BEGIN CERTIFICATE-----
+    MIIDVzCCAj+gAwIBAgIQJXM+APyYjbBATV0LVhf5eDANBgkqhkiG9w0BAQsFADAp
+    MScwJQYDVQQDDB5BRC1ETlMtU1JWMS5jb3JwLmVvbGNlbnRlci5uZXQwHhcNMjYx
+    MDE0MTIwMTQ3WhcNMjgxMDE0MTIxMTQxWjApMScwJQYDVQQDDB5BRC1ETlMtU1JW
+    MS5jb3JwLmVvbGNlbnRlci5uZXQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+    AoIBAQDFCcnwEZztsJq4hmwjEqi43KD6gEzD749ip5bUaLH3nz+12rxc90iRnhOf
+    IOhHGDfP5NtfGcPSdIitm4FbKs/fRClr0ZwMM5+Yfrw/Wa2EiBpIFlmq6TrZbxzA
+    zFnbgi/yERcvo3j1sxOru2G38W2NwXfqGC5Maxw7NkOzKLVrhmizmQSR6zUOdECE
+    VqqzRZ8b2g4Wjmw9G3X/k6nh9MPtZ7kCndcUfAq86gLL2o+zymKLH326gR7xwPuo
+    lYXUazpsYzu1u9LABypXGMNU5HtPC/zCIv5fOL95IpnjbQkFyzgB01Y+0r5u4WBE
+    z5WPNywO/6MYqr9jfmFIbAekOsQJAgMBAAGjezB5MA4GA1UdDwEB/wQEAwIFoDAd
+    BgNVHSUEFjAUBggrBgEFBQcDAgYIKwYBBQUHAwEwKQYDVR0RBCIwIIIeQUQtRE5T
+    LVNSVjEuY29ycC5lb2xjZW50ZXIubmV0MB0GA1UdDgQWBBRm4pd3S3zVe4BHevYB
+    7OW/Hxpx4DANBgkqhkiG9w0BAQsFAAOCAQEAo0/G/kZQVnQn+C9zuedOtBi3UkIM
+    fLQ3+gH9Txfw1lbHs24b4BYyME4Vb2Nf/eJn5YPQnx9aCClLdPqIj0eK/zfqv/9C
+    v/e5xi7Ae2FnQ87EJENYHBWYm8pntfWb5y1EePpnf36/CaFq6Czs7/nqw4Bhi2Xn
+    +S3/htmOsowLuQ1E/dj2e/tmAF6aFbBAeIWxgWUWdEE8S7J9KpzxsG9zf0TxZ9t5
+    jbf30MbOekOSKqNlB5P6XOUQ0Rhz1yYL11lT1tMVal0AeEuyRSZa85kVja2CuhWw
+    MmbvzSkVOX6H4r6QV+/7WrALfIk3dQJIcRRu+OSzqRRrnyjipV/AEPEO8Q==
+    -----END CERTIFICATE-----
+    -----BEGIN CERTIFICATE-----
+    MIIDVzCCAj+gAwIBAgIQHKMw+GhtiJdKIjsCQke+zDANBgkqhkiG9w0BAQsFADAp
+    MScwJQYDVQQDDB5BRC1ETlMtU1JWMi5jb3JwLmVvbGNlbnRlci5uZXQwHhcNMjYx
+    MDE1MTE1MjE3WhcNMjgxMDE1MTIwMjA1WjApMScwJQYDVQQDDB5BRC1ETlMtU1JW
+    Mi5jb3JwLmVvbGNlbnRlci5uZXQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+    AoIBAQCSri3tlzHSFNvv3BSKEFQmwiTcGhcfSpbbQ8YPsLedTEaoQPEBbRfEh69l
+    RFo1PCGR8DPAIdIEHzaDSiopWuI2ZFUUHrJx+SIjNYwaYxxxaiFG1bMp9BfzYovU
+    L3Y+TDKPHZ7aBYCMuVzCyIjoRf7pw1kKb70W+eoUjwz0sOBiv2kyAOxeKpuGyOLG
+    XqMten3Ab67eCghk+u7opktMCqGnV4MGHpt6b4/vjah7Y3cfuT4YcJ4bGcQrltsM
+    7wxhrcNQ0I5aE/x4gRaju3ihyb05sxcxR3RS1/LhpXCfjCwYVR4L2QCfOsFVVwsc
+    uVOUVjaw4w8jC81pUYFOlItP29VVAgMBAAGjezB5MA4GA1UdDwEB/wQEAwIFoDAd
+    BgNVHSUEFjAUBggrBgEFBQcDAgYIKwYBBQUHAwEwKQYDVR0RBCIwIIIeQUQtRE5T
+    LVNSVjIuY29ycC5lb2xjZW50ZXIubmV0MB0GA1UdDgQWBBQB2rfCeeB/eBIBE891
+    /4bnJ2JctzANBgkqhkiG9w0BAQsFAAOCAQEARbTHbFaUduwUl2IlJH9rnuxhjzaO
+    T/NSOjcJraSKZ/RT+5cXEp4Kx/K7vixXXQXHFSH2ltOOzTuNGhECUnyw2ihNbEBD
+    2Vu1zXe/sY2AE6i08gMnPbnz+XPfEfWDrDpwqAeEvEb7nosqE41P/STQtQwXvnVu
+    GNtP3n9R29xwRsNFWnnS0u1NuXxD5SxtNd0rYOxusmI9H/cQWhnteb3n4uHmkjlE
+    aagswa3AogtKNq30lEBhW/M5k31ruG4Uj2SFQZq9DqcCyYuBNLz5jqZfde9wJ5dN
+    u2FeEp1VpBioKrwm/jbzgv5ALHQfyLDVpdssKThfjG5pW0khrsWoQkPtYw==
+    -----END CERTIFICATE-----
 
 # -----------------------------------------------------------------------------
 # EXTRA VOLUMES (escape hatch — normally leave empty)
