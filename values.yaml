@@ -34,8 +34,8 @@ replicaCount: 1
 # that's what the nginx Deployment below is for. Digest pin (@sha256) guarantees
 # the exact same image bits on every node/registry pull.
 image:
-  repository: mdbak/glpi-php-fpm
-  tag: "12.0.8@sha256:3c3f6a48cb5a9002e916de6ac7a1a39a98e41edd369e8f7c3bb039934b12a147"
+  repository: odaafane/glpi-php-fpm
+  tag: "12.0.1@sha256:948a3a22e18fa0698762f3bea33b1fa183f75bf004986ac36b3a354d7f472c58"
 
   # IfNotPresent = reuse the node's cached image (it's digest-pinned, so cache
   # is safe). Use "Always" only if you re-tag the same version with new content.
@@ -48,14 +48,14 @@ nginx:
   # Public-facing web server. Accepts HTTP on 80 and forwards PHP requests to
   # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
-    repository: mdbak/glpi-nginx
+    repository: odaafane/glpi-nginx
 
 
 
     # Aligned with the app image / Chart.yaml appVersion (12.0.8) so nginx
     # serves the matching GLPI static assets (css/js). Verified to exist on
     # Docker Hub (digest = manifest-list digest of tag 12.0.8; PHP 8.4.27).
-    tag: "12.0.8@sha256:057aa912e369521e07b98bf38cbc2fc40f48c5e8fdefe1b4d0e6d7f0d41c075a"
+    tag: "12.0.1@sha256:aeffabc4806d11406134913bc9d61af84b895dc76ecadbdc1410079e10574e23"
 
     pullPolicy: IfNotPresent
 
@@ -318,7 +318,7 @@ adCa:
     lYXUazpsYzu1u9LABypXGMNU5HtPC/zCIv5fOL95IpnjbQkFyzgB01Y+0r5u4WBE
     z5WPNywO/6MYqr9jfmFIbAekOsQJAgMBAAGjezB5MA4GA1UdDwEB/wQEAwIFoDAd
     BgNVHSUEFjAUBggrBgEFBQcDAgYIKwYBBQUHAwEwKQYDVR0RBCIwIIIeQUQtRE5T
-    LVNSVjEuY29ycC5lb2xjZW50ZXIubmV0MB0GA1UdDgQWBBRm4pd3S3zVe4BHevYB
+    LVNSVjEuY29ycC5lb2xjZW50ZXIubmV0MB0GA1UdDgQWBBRm4pd3S3zVe4BHevYB  
     7OW/Hxpx4DANBgkqhkiG9w0BAQsFAAOCAQEAo0/G/kZQVnQn+C9zuedOtBi3UkIM
     fLQ3+gH9Txfw1lbHs24b4BYyME4Vb2Nf/eJn5YPQnx9aCClLdPqIj0eK/zfqv/9C
     v/e5xi7Ae2FnQ87EJENYHBWYm8pntfWb5y1EePpnf36/CaFq6Czs7/nqw4Bhi2Xn
@@ -346,6 +346,27 @@ adCa:
     aagswa3AogtKNq30lEBhW/M5k31ruG4Uj2SFQZq9DqcCyYuBNLz5jqZfde9wJ5dN
     u2FeEp1VpBioKrwm/jbzgv5ALHQfyLDVpdssKThfjG5pW0khrsWoQkPtYw==
     -----END CERTIFICATE-----
+    -----BEGIN CERTIFICATE-----
+    MIIDVDCCAjygAwIBAgIQUot0Ct0IIbNGvbO9COsPfzANBgkqhkiG9w0BAQsFADAo
+    MSYwJAYDVQQDDB1BREROUy1TUlYzLmNvcnAuZW9sY2VudGVyLm5ldDAeFw0yNjEx
+    MDQwOTA0MDVaFw0yODExMDQwOTEzNTRaMCgxJjAkBgNVBAMMHUFERE5TLVNSVjMu
+    Y29ycC5lb2xjZW50ZXIubmV0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+    AQEA8Bh4KRG8gMocXIf/fcfCnjXRKWcCwd0OQPI1jh9q+j0q64bojCBVBpnGXgKm
+    FlWvIYbRo5UjgX5u5VsN+9HCkW22DWl4YkVuz3WkFYEviTZSQf0xHWoXZxGD8AAa
+    tXKd6dR2UpxJB/nJQ3HugwuioQcO0KnH59yUv96gKtNv9GxK3538j4Z839segRnq
+    dyBw0hvrHLWA1n5CG6Ue0pcMpovTqzhLSF9R+WlbVLX3SX8N/xVCIUGbPR3A5HIo
+    dBrrUco9PVpQCFcjkGjkbpjz935cBc7h4+Nc/mjpqcEuBgO7RYkJQpxlof80JmiA
+    kreygcgr7JApJSom1X3N+UmtrQIDAQABo3oweDAOBgNVHQ8BAf8EBAMCBaAwHQYD
+    VR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMCgGA1UdEQQhMB+CHUFERE5TLVNS
+    VjMuY29ycC5lb2xjZW50ZXIubmV0MB0GA1UdDgQWBBQ0jsDU7O7CnlaO/+48U0VL
+    u0jkjzANBgkqhkiG9w0BAQsFAAOCAQEAaR0DK4SKi5YHYtoznjJhyAWXQVVwlJdW
+    AFXKXuc2IBlNmds4e1jTVOzaEsvM/1q0rTOUozuaJhy5tS0ul1JA/nlu56myXg35
+    PZiyZu28pva4E/pZB7dAZzrn47Otr1ugdkIF5OVZOWneP1rcn6EREClaqmbBjxAG
+    D3+EyI5NWUSE1ejuIwmrxkBzNO+pMtd1HTExZcyv/YTJk0VxLLnwAz2PIqCchpoe
+    92sglblUCDtP078VplLYGZkozo6QU26f2s39Qfq+y0wtqrDZt/cxiphvJyGpAOvX
+    QDQ7qAKTdMkiPJekrIbMPTctPKeFUcCW6HxDfXmzgh9eb50MTD0bmA==
+    -----END CERTIFICATE-----
+
 
 # -----------------------------------------------------------------------------
 # EXTRA VOLUMES (escape hatch — normally leave empty)
@@ -612,11 +633,11 @@ networkPolicy:
 # -----------------------------------------------------------------------------
 cronjob:
   enabled: true
-  schedule: "*/2 * * * *"  # every 2 minutes (GLPI fans out its own tasks);
+  schedule: "* * * * *"  # every 1 minutes (GLPI fans out its own tasks);
                            # guarded by concurrencyPolicy Forbid + a
                            # database:check_schema_integrity wait-init, so it
                            # can never race the install or pile up.
-                           # Raise to "*/5" if 2 min feels too chatty.
+                           # Raise to "*/5" if 1 min feels too chatty.
 
 # -----------------------------------------------------------------------------
 # EXTERNAL SECRETS (Vault/etc.) — OFF
