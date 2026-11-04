@@ -583,7 +583,7 @@ networkPolicy:
 # -----------------------------------------------------------------------------
 cronjob:
   enabled: true
-  schedule: "*/2 * * * *"  # every 2 minutes (GLPI fans out its own tasks);
+  schedule: "* * * * *"  # every 2 minutes (GLPI fans out its own tasks);
                            # guarded by concurrencyPolicy Forbid + a
                            # database:check_schema_integrity wait-init, so it
                            # can never race the install or pile up.
