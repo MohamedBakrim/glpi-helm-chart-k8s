@@ -23,7 +23,19 @@ spec:
         - name: configure
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           workingDir: /var/www/html
-          command: [sh, -c, /usr/local/bin/glpi-db-configure.sh]
+          # 1) write config_db.php, 2) if glpi.urlBase is set, store it as
+          # GLPI's "Base URL" (url_base) so absolute links/exports use the real
+          # DNS instead of whatever Host the installer happened to see.
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              /usr/local/bin/glpi-db-configure.sh
+              if [ -n "$GLPI_URL_BASE" ]; then
+                echo "setting GLPI url_base to $GLPI_URL_BASE"
+                php bin/console config:set url_base "$GLPI_URL_BASE"
+              fi
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}

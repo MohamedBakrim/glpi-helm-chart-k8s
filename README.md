@@ -1,6 +1,6 @@
 # glpi-helm-chart-k8s
 
-A Helm 3 chart (chart name: **`myhelm`**) that deploys [GLPI 11](https://glpi-project.github.io/GLPI/) — the open-source ITSM / asset-management helpdesk — on Kubernetes, with the full production shape a stateful PHP app needs: **php-fpm** running GLPI, an **nginx** frontend, **MariaDB** for the database, **Valkey** for cache/sessions, scheduled-task and backup CronJobs, Ingress (or Gateway API) exposure, and a chain of post-install hook Jobs that automate GLPI's otherwise-manual installer. Application code ships *inside* the php-fpm image (nothing is downloaded at install time); only real state (`/etc/glpi`, `/var/lib/glpi`, `marketplace`, `/backup`) is persisted on PVCs.
+A Helm 3 chart (chart name: **`myhelm`**) that deploys [GLPI 12](https://glpi-project.github.io/GLPI/) — the open-source ITSM / asset-management helpdesk — on Kubernetes, with the full production shape a stateful PHP app needs: **php-fpm** running GLPI, an **nginx** frontend, **MariaDB** for the database, **Valkey** for cache/sessions, scheduled-task and backup CronJobs, Ingress (or Gateway API) exposure, and a chain of post-install hook Jobs that automate GLPI's otherwise-manual installer. Application code ships *inside* the php-fpm image (nothing is downloaded at install time); only real state (`/etc/glpi`, `/var/lib/glpi`, `marketplace`, `/backup`) is persisted on PVCs.
 
 ## Features
 
@@ -38,7 +38,7 @@ kubectl -n glpi create secret generic my-test-app-auth \
 helm install glpi . -n glpi --create-namespace
 
 # or from the packaged artifact:
-helm install glpi dist/myhelm-0.2.10.tgz -n glpi --create-namespace
+helm install glpi dist/myhelm-0.3.10.tgz -n glpi --create-namespace
 ```
 
 Install **without `--wait`**: the backup PVC stays `Pending` until the first backup job runs (`WaitForFirstConsumer`) — that is normal.
@@ -66,11 +66,12 @@ Full, heavily commented reference lives in [`values.yaml`](values.yaml). The mos
 | Key | Default | Effect |
 |---|---|---|
 | `replicaCount` | `1` | php-fpm/nginx replicas; >1 needs RWX storage first |
-| `image.tag` | `11.0.11@sha256:…` | php-fpm app image (digest-pinned, contains GLPI code) |
-| `nginx.image.tag` | `11.0.11@sha256:…` | nginx frontend image (aligned with `appVersion`) |
+| `image.tag` | `12.0.8@sha256:…` | php-fpm app image (digest-pinned, contains GLPI code) |
+| `nginx.image.tag` | `12.0.8@sha256:…` | nginx frontend image (aligned with `appVersion`) |
 | `nginx.service.type` / `.port` | `ClusterIP` / `80` | the public HTTP Service (Ingress/test/HTTPRoute target) |
 | `service.port` | `9000` | php-fpm FastCGI Service — internal only, never expose it |
 | `ingress.enabled` / `.hosts` / `.tls` | `true` / `myhelm.local` / secret `myhelm-tls` | HTTPS front door (cert-manager `selfsigned` issuer) |
+| `glpi.urlBase` | `""` | public base URL stored in GLPI's DB (`url_base`); **set this in prod** (e.g. `https://glpi.example.com`) or generated links/exports may point at `localhost` |
 | `httpRoute.enabled` | `false` | Gateway API alternative to Ingress |
 | `nodeSelector` / `mariadb.nodeSelector` / `valkey.nodeSelector` | `{}` | **empty by default** — pin to *your* node if using local-path/RWO storage |
 | `jobs.dbInit.enabled` | `true` | master switch for all four install/upgrade hook Jobs |

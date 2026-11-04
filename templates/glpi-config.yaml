@@ -11,4 +11,6 @@ data:
   MARIADB_PORT: "3306"
   MARIADB_DATABASE: "{{ .Values.mariadb.auth.database }}"
   MARIADB_USER: "{{ .Values.mariadb.auth.username }}"
-  
+  # Public base URL (see glpi.urlBase in values.yaml) — consumed by the
+  # configure hook job, which runs `bin/console config:set url_base` with it.
+  GLPI_URL_BASE: {{ .Values.glpi.urlBase | quote }}

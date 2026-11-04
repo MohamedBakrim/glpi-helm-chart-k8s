@@ -13,3 +13,4 @@ Desktop.ini
 
 # NOTE: do NOT ignore *.tgz — charts/*.tgz are the vendored dependencies
 # (mariadb/valkey) the server needs for an offline install.
+

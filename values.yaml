@@ -1,5 +1,5 @@
 # =============================================================================
-# MYHELM — GLPI 11 Helm chart values
+# MYHELM — GLPI 12 Helm chart values
 # =============================================================================
 # Every setting is commented below so you always know what it does.
 # RULE OF THUMB: change VALUES here, never inside charts/*.tgz (subcharts) —
@@ -24,14 +24,19 @@
 # so raising this above 1 needs RWX storage first. Ignored if autoscaling is on.
 replicaCount: 1
 
-# The PHP-FPM container that runs GLPI. This image CONTAINS the GLPI 11 code
+# The PHP-FPM container that runs GLPI. This image CONTAINS the GLPI 12 code
+
+# (shipped at /var/www/html) — nothing is downloaded at install time.
+
 # (29 files at /var/www/html) — nothing is downloaded at install time.
+
 # It speaks FastCGI on port 9000, NOT HTTP: browsers can't talk to it directly,
 # that's what the nginx Deployment below is for. Digest pin (@sha256) guarantees
 # the exact same image bits on every node/registry pull.
 image:
-  repository: odaafane/glpi-php-fpm
-  tag: "12.0.7@sha256:c9ca6a61d7f3788711b8a38dbc6580bfe050411c90d70975784d2797a0a3acb6"
+  repository: mdbak/glpi-php-fpm
+  tag: "12.0.8@sha256:3c3f6a48cb5a9002e916de6ac7a1a39a98e41edd369e8f7c3bb039934b12a147"
+
   # IfNotPresent = reuse the node's cached image (it's digest-pinned, so cache
   # is safe). Use "Always" only if you re-tag the same version with new content.
   pullPolicy: IfNotPresent
@@ -43,11 +48,15 @@ nginx:
   # Public-facing web server. Accepts HTTP on 80 and forwards PHP requests to
   # the php-fpm Service on 9000; serves static files (css/js/images) itself.
   image:
-    repository: odaafane/glpi-nginx
-    # Aligned with the app image / Chart.yaml appVersion (12.0.0) so nginx
+    repository: mdbak/glpi-nginx
+
+
+
+    # Aligned with the app image / Chart.yaml appVersion (12.0.8) so nginx
     # serves the matching GLPI static assets (css/js). Verified to exist on
-    # Docker Hub (digest = manifest-list digest of tag 12.0.0).
-    tag: "12.0.7@sha256:c7d71c5b60f0af385157d7d5eed755d16b72c3a0642e06cc7d7eceb54e0894d0"
+    # Docker Hub (digest = manifest-list digest of tag 12.0.8; PHP 8.4.27).
+    tag: "12.0.8@sha256:057aa912e369521e07b98bf38cbc2fc40f48c5e8fdefe1b4d0e6d7f0d41c075a"
+
     pullPolicy: IfNotPresent
 
   # The Service for nginx = the HTTP entry point. The Ingress and the
@@ -177,18 +186,18 @@ securityContext:
 # host and issuer before serving real internet traffic.
 ingress:
   enabled: true
-  className: nginx                     # which controller picks this up
+  className: nginx
   annotations:
-    cert-manager.io/cluster-issuer: selfsigned   # ask cert-manager for a cert
+    cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: myhelm.local               # ← change to your real hostname
+    - host: support.corp.eolcenter.net
       paths:
         - path: /
-          pathType: Prefix             # everything under / goes to nginx
+          pathType: Prefix
   tls:
-    - secretName: myhelm-tls           # cert-manager writes the cert in here
+    - secretName: support-tls
       hosts:
-        - myhelm.local
+        - support.corp.eolcenter.net
 
 # -----------------------------------------------------------------------------
 # GATEWAY API (alternative to Ingress — OFF)
@@ -380,6 +389,26 @@ tolerations: []
 affinity: {}
 
 # -----------------------------------------------------------------------------
+# GLPI APPLICATION SETTINGS
+# -----------------------------------------------------------------------------
+
+# Public base URL of this GLPI instance — THE fix for links/exports generated
+# with http://localhost (e.g. /Form/Export downloads pointing at localhost).
+# GLPI stores this in the DB ("Base URL", key `url_base`) and uses it to build
+# ABSOLUTE urls: file downloads, form exports, email notification links...
+# When empty, GLPI derives URLs from the request's Host header, which is wrong
+# behind an ingress/proxy whenever the DB still holds a localhost value (often
+# baked in by the very first install).
+# Set it to the REAL dns, no trailing slash, e.g.:
+#   glpi:
+#     urlBase: "https://glpi.example.com"
+# Applied by the configure hook job (`php bin/console config:set url_base ...`)
+# on every install/upgrade, so it is self-healing — but it also means changes
+# made in the GLPI UI (Setup → General → Base URL) get overwritten on upgrade.
+glpi:
+  urlBase: ""
+
+# -----------------------------------------------------------------------------
 # JOBS — the post-install/upgrade hook chain
 # -----------------------------------------------------------------------------
 # Order: verify-dir (w5, root) → install (w10) → configure (w20) → cache (w30).
@@ -537,7 +566,7 @@ filesPersistence:
 # The backup PVC stays Pending until the first job runs (WaitForFirstConsumer)
 # — that's normal, and why you must install WITHOUT --wait.
 backup:
-  enabled: true
+  enabled: false
   schedule: "0 2 * * *"    # cron expression: daily at 02:00
 
   # Snapshot the file PVCs next to the DB dump. Each needs its claim enabled
